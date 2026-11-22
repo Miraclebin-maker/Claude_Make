@@ -1,7 +1,7 @@
 // 앱 셸 캐시. 네트워크 우선(서버 재검증), 실패 시 캐시 (오프라인 실행).
 // 버전은 js/version.js 의 APP_VERSION 과 같아야 한다 (tests/version.test.mjs 가 검사).
 // 배포 호스트(GitHub Pages)는 max-age=600 을 보내므로, 브라우저 HTTP 캐시를 피해 받는다.
-const CACHE = 'tsl-shell-2.2.0';
+const CACHE = 'tsl-shell-2.3.0';
 const SHELL = [
   './',
   './index.html',
@@ -18,10 +18,28 @@ const SHELL = [
   './js/plaid.js',
   './js/audio/audio.js',
   './js/audio/ev.js',
-  './js/audio/ev-params.js',
+  './js/audio/v10.js',
+  './js/audio/rpm-model.js',
   './js/gauge.js',
   './js/version.js',
   './js/update-policy.js',
+  './audio/v10/rpm-1000.wav',
+  './audio/v10/rpm-1500.wav',
+  './audio/v10/rpm-2000.wav',
+  './audio/v10/rpm-2500.wav',
+  './audio/v10/rpm-3000.wav',
+  './audio/v10/rpm-3500.wav',
+  './audio/v10/rpm-4000.wav',
+  './audio/v10/rpm-4500.wav',
+  './audio/v10/rpm-5000.wav',
+  './audio/v10/rpm-5500.wav',
+  './audio/v10/rpm-6000.wav',
+  './audio/v10/rpm-6500.wav',
+  './audio/v10/rpm-7000.wav',
+  './audio/v10/rpm-7500.wav',
+  './audio/v10/rpm-8000.wav',
+  './audio/v10/rpm-8500.wav',
+  './audio/v10/rpm-9000.wav',
 ];
 
 self.addEventListener('install', (event) => {

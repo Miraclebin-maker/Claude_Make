@@ -14,8 +14,7 @@ const SOUND_LABEL = {
   off: '음소거',
   zimmer: '한스짐머 EV',
   plaid: '플래드 워프',
-  motor: '일렉트릭 슈퍼카',
-  turbine: '제트 터빈',
+  v10: 'V10 슈퍼카',
 };
 
 const THEMES = ['minimal', 'plaid', 'arc', 'twin', 'hud'];
@@ -288,7 +287,8 @@ async function syncWakeLock() {
 function setSound(key) {
   state.sound = key;
   audio.setProfile(key);
-  ui.toast(key === 'off' ? '주행 사운드 음소거' : `주행 사운드: ${SOUND_LABEL[key]} 활성화`);
+  if (key === 'v10') ui.toast('V10 사운드 불러오는 중');
+  else ui.toast(key === 'off' ? '주행 사운드 음소거' : `주행 사운드: ${SOUND_LABEL[key]} 활성화`);
   schedule();
 }
 

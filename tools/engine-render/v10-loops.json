@@ -1,0 +1,12 @@
+{
+  "_note": "V10 앱 루프 세트 렌더 설정 (§18.1). 재생성: cd tools/engine-render && node render.mjs loops --config v10-loops.json",
+  "preset": "presets/v10b.json",
+  "rpmMin": 1000,
+  "rpmMax": 9000,
+  "rpmStep": 500,
+  "targetSeconds": 1.0,
+  "sampleRate": 32000,
+  "warmupSeconds": 1.0,
+  "targetDbfs": -1,
+  "output": "../../app/audio/v10"
+}

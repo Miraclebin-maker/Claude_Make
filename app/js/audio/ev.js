@@ -1,6 +1,5 @@
-// EV 사운드 (한스짐머 EV, 플래드 워프: 원본 legacy 의 오실레이터 구성) + 신규 2종 (일렉트릭 슈퍼카 motor, 제트 터빈 turbine).
+// EV 사운드 (한스짐머 EV, 플래드 워프: 원본 legacy 의 오실레이터 구성).
 
-import { motorParams, turbineTarget, stepSpool } from './ev-params.js';
 
 export function createPinkNoiseBuffer(ctx) {
   const bufferSize = ctx.sampleRate * 2;
@@ -45,11 +44,9 @@ function createSpaceReverb(ctx) {
   return convolver;
 }
 
-// key: 'zimmer' | 'plaid' | 'motor' | 'turbine'. bus: 출력 노드. 반환 { update(speedKmh, pedalPct, kw, peakKw), stop() }
-// kw/peakKw 는 motor 와 turbine 만 쓴다(zimmer/plaid 는 무시).
+// key: 'zimmer' | 'plaid'. bus: 출력 노드. 반환 { update(speedKmh, pedalPct, kw, peakKw), stop() }
+// kw/peakKw 는 쓰지 않는다(호출 인터페이스만 맞춘다).
 export function startEv(key, ctx, bus) {
-  if (key === 'motor') return startMotor(ctx, bus);
-  if (key === 'turbine') return startTurbine(ctx, bus);
   const voices = [];
   const noiseNode = ctx.createBufferSource();
   noiseNode.buffer = createPinkNoiseBuffer(ctx);
@@ -151,141 +148,6 @@ export function startEv(key, ctx, bus) {
     });
     try { noiseNode.stop(); noiseNode.disconnect(); } catch (e) { /* 이미 정지 */ }
     try { noiseFilter.disconnect(); noiseGain.disconnect(); } catch (e) { /* noop */ }
-  }
-
-  return { update, stop };
-}
-
-// ---- 신규 2종 ------------------------------------------------------------
-// 일렉트릭 슈퍼카: 전기모터 휘닝. 기본음 f + 2배음 0.35 + 3배음 0.15, 인버터 f*1.5 삼각파 0.08, 기어 휘닝 f*0.5 0.12.
-// 경로: 음원 -> 음량 -> 하이패스 120Hz -> 피킹 1.2kHz +4dB Q1 -> bus. 음량 계수 0.25 는 헤드룸 여유(설계 수치 밖의 스케일).
-const MOTOR_VOICE_SCALE = 0.25;
-
-function startMotor(ctx, bus) {
-  const voice = ctx.createGain();
-  voice.gain.value = 0;
-  const hp = ctx.createBiquadFilter();
-  hp.type = 'highpass';
-  hp.frequency.value = 120;
-  const peak = ctx.createBiquadFilter();
-  peak.type = 'peaking';
-  peak.frequency.value = 1200;
-  peak.Q.value = 1;
-  peak.gain.value = 4;
-  voice.connect(hp);
-  hp.connect(peak);
-  peak.connect(bus);
-
-  const parts = [
-    { type: 'sine', mult: 1, gain: 1 },
-    { type: 'sine', mult: 2, gain: 0.35 },
-    { type: 'sine', mult: 3, gain: 0.15 },
-    { type: 'triangle', mult: 1.5, gain: 0.08 },
-    { type: 'sine', mult: 0.5, gain: 0.12 },
-  ].map((spec) => {
-    const osc = ctx.createOscillator();
-    osc.type = spec.type;
-    const g = ctx.createGain();
-    g.gain.value = spec.gain;
-    osc.connect(g);
-    g.connect(voice);
-    osc.start();
-    return { osc, mult: spec.mult };
-  });
-
-  function update(speedKmh, pedalPct, kw = 0, peakKw = 200) {
-    const now = ctx.currentTime;
-    const p = motorParams({ speed: speedKmh, pedal: pedalPct, kw, peakKw });
-    parts.forEach((v) => v.osc.frequency.setTargetAtTime(p.freq * v.mult, now, 0.06));
-    voice.gain.setTargetAtTime(p.gain * MOTOR_VOICE_SCALE, now, 0.06);
-  }
-
-  function stop() {
-    parts.forEach((v) => { try { v.osc.stop(); v.osc.disconnect(); } catch (e) { /* 이미 정지 */ } });
-    [voice, hp, peak].forEach((n) => { try { n.disconnect(); } catch (e) { /* noop */ } });
-  }
-
-  return { update, stop };
-}
-
-// 제트 터빈: 스풀(0–1, 관성)이 휘슬·공기 흐름·저역 럼블을 함께 올린다. 리버브 wet 0.15.
-function startTurbine(ctx, bus) {
-  const mix = ctx.createGain();
-  const dry = ctx.createGain();
-  dry.gain.value = 1;
-  mix.connect(dry);
-  dry.connect(bus);
-  const reverb = createSpaceReverb(ctx);
-  const wet = ctx.createGain();
-  wet.gain.value = 0.15;
-  mix.connect(reverb);
-  reverb.connect(wet);
-  wet.connect(bus);
-
-  // 휘슬: 사인 두 개(0.10, 0.05). 주파수는 스풀에 따라 올라간다.
-  const whistleA = ctx.createOscillator();
-  whistleA.type = 'sine';
-  const whistleAGain = ctx.createGain();
-  whistleAGain.gain.value = 0.10;
-  whistleA.connect(whistleAGain);
-  whistleAGain.connect(mix);
-  whistleA.start();
-
-  const whistleB = ctx.createOscillator();
-  whistleB.type = 'sine';
-  const whistleBGain = ctx.createGain();
-  whistleBGain.gain.value = 0.05;
-  whistleB.connect(whistleBGain);
-  whistleBGain.connect(mix);
-  whistleB.start();
-
-  // 공기 흐름: 핑크 노이즈 -> 밴드패스 -> 음량(0.04 + s*0.25)
-  const noiseNode = ctx.createBufferSource();
-  noiseNode.buffer = createPinkNoiseBuffer(ctx);
-  noiseNode.loop = true;
-  const airFilter = ctx.createBiquadFilter();
-  airFilter.type = 'bandpass';
-  airFilter.frequency.value = 300;
-  airFilter.Q.value = 0.9;
-  const airGain = ctx.createGain();
-  airGain.gain.value = 0.04;
-  noiseNode.connect(airFilter);
-  airFilter.connect(airGain);
-  airGain.connect(mix);
-  noiseNode.start();
-
-  // 저역 럼블: 사인 45 + s*40 Hz, 음량 0.25*s
-  const rumble = ctx.createOscillator();
-  rumble.type = 'sine';
-  rumble.frequency.value = 45;
-  const rumbleGain = ctx.createGain();
-  rumbleGain.gain.value = 0;
-  rumble.connect(rumbleGain);
-  rumbleGain.connect(mix);
-  rumble.start();
-
-  let spool = 0;
-  let lastT = null;
-
-  function update(speedKmh, pedalPct) {
-    const now = ctx.currentTime;
-    const dt = lastT === null ? 1 / 60 : Math.min(0.2, Math.max(0, now - lastT));
-    lastT = now;
-    spool = stepSpool(spool, turbineTarget({ speed: speedKmh, pedal: pedalPct }), dt);
-    whistleA.frequency.setTargetAtTime(600 + spool * 3400, now, 0.05);
-    whistleB.frequency.setTargetAtTime((600 + spool * 3400) * 1.5, now, 0.05);
-    airFilter.frequency.setTargetAtTime(300 + spool * 2200, now, 0.08);
-    airGain.gain.setTargetAtTime(0.04 + spool * 0.25, now, 0.08);
-    rumble.frequency.setTargetAtTime(45 + spool * 40, now, 0.1);
-    rumbleGain.gain.setTargetAtTime(0.25 * spool, now, 0.1);
-  }
-
-  function stop() {
-    [whistleA, whistleB, rumble].forEach((o) => { try { o.stop(); o.disconnect(); } catch (e) { /* noop */ } });
-    try { noiseNode.stop(); noiseNode.disconnect(); } catch (e) { /* noop */ }
-    [mix, dry, reverb, wet, airFilter, airGain, rumbleGain, whistleAGain, whistleBGain].forEach((n) => {
-      try { n.disconnect(); } catch (e) { /* noop */ }
-    });
   }
 
   return { update, stop };

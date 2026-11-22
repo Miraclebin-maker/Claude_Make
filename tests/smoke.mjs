@@ -64,7 +64,7 @@ async function waitForServer(timeoutMs = 10000) {
 
 // §14.4 정적 검사: v1 잔재(내연기관 워클릿, RPM 모델, v8/gt6, 삭제된 테마)가 app/ 에 없어야 한다.
 function staticLeftovers() {
-  const pat = /engine-worklet|rpm-model|\bv8\b|\bgt6\b|'dial'|'track'|'night'/;
+  const pat = /engine-worklet|\bv8\b|\bgt6\b|'dial'|'track'|'night'|'motor'|'turbine'|ev-params/;
   const hits = [];
   const walk = (dir) => {
     for (const name of readdirSync(dir)) {
@@ -431,10 +431,23 @@ async function main() {
         check(`${tag} 콘솔 에러 0`, errors.length === 0, errors.slice(0, 3).join(' | '));
       }
 
-      // 음원 5종: 클릭 -> 저장값 -> 선택 표시가 모두 반영되는지 (실기기 보고 대응)
+      // 음원 4종: 클릭 -> 저장값 -> 선택 표시가 모두 반영되는지. V10 은 루프 17개 디코드까지 기다린다 (§18.3)
       await page.click('.dock [data-act="settings"]');
-      for (const key of ['motor', 'turbine', 'zimmer', 'plaid', 'off']) {
+      for (const key of ['v10', 'zimmer', 'plaid', 'off']) {
         await page.click(`#sheet-settings button[data-sound="${key}"]`);
+        if (key === 'v10') {
+          await page.waitForFunction(() => document.documentElement.dataset.v10 === 'ready', null, { timeout: 25000 });
+          await page.waitForTimeout(500); // 데모가 도는 중에도 소리 경로가 오류 없이 돌아가는지
+          const v = await page.evaluate(() => ({ sound: document.documentElement.dataset.sound, v10: document.documentElement.dataset.v10, demo: document.getElementById('btn-demo').textContent }));
+          check(`${vpTag} V10: 루프 17개 디코드 완료, 데모 중 사운드 유지`, v.v10 === 'ready' && v.sound === 'v10' && v.demo === '데모 중지', `v10=${v.v10} sound=${v.sound} demo="${v.demo}"`);
+          // 가속 사운드 테스트(미리듣기): 누르는 동안 정차 공회전 레브 경로, 떼면 복귀. 오류 없어야 한다.
+          await page.locator('#btn-preview').dispatchEvent('pointerdown');
+          await page.waitForTimeout(400);
+          await page.locator('#btn-preview').dispatchEvent('pointerup');
+          await page.waitForTimeout(200);
+          const pv = await page.evaluate(() => document.documentElement.dataset.audio || '');
+          check(`${vpTag} V10: 미리듣기 누르고 떼기 오류 없음`, pv !== 'error', `audio=${pv}`);
+        }
         await page.waitForTimeout(250);
         const st = await page.evaluate((k) => ({
           saved: localStorage.getItem('tsl_sound_profile'),
@@ -467,7 +480,7 @@ async function main() {
           hits,
         };
       });
-      check(`${vpTag} 설정: 버전 표시 2.2.0`, appLayout.version === '2.2.0', appLayout.version);
+      check(`${vpTag} 설정: 버전 표시 2.3.0`, appLayout.version === '2.3.0', appLayout.version);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 시트 안에 보임`, appLayout.refreshIn && appLayout.quitIn,
         `refresh ${appLayout.refreshIn} quit ${appLayout.quitIn}`);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 서로·다른 버튼과 겹치지 않음`, !appLayout.sameRowHit && appLayout.hits.length === 0,
@@ -475,7 +488,7 @@ async function main() {
 
       if (vp.w === 390 && vp.h === 844) {
         // §15.2 새로고침: 설정(localStorage) 유지, 이전 캐시 삭제, 다시 로드
-        await page.click('#sheet-settings button[data-sound="motor"]');
+        await page.click('#sheet-settings button[data-sound="v10"]');
         await page.waitForTimeout(200);
         const loaded = page.waitForEvent('load', { timeout: 20000 });
         await page.locator('[data-act="refresh-app"]').click();
@@ -485,8 +498,8 @@ async function main() {
           saved: localStorage.getItem('tsl_sound_profile'),
           keys: await caches.keys(),
         }));
-        check('새로고침: 설정 유지 (사운드 motor 저장값)', after.saved === 'motor', `saved=${after.saved}`);
-        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.2.0'),
+        check('새로고침: 설정 유지 (사운드 v10 저장값)', after.saved === 'v10', `saved=${after.saved}`);
+        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.3.0'),
           after.keys.join(', ') || 'none');
 
         // §15.3 종료: 모든 기능 정지, 오버레이 표시, 다시 시작으로 정상 복귀

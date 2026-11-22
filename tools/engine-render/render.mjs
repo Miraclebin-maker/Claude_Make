@@ -9,7 +9,7 @@
 //         부하/스로틀 파라미터가 모델에 없으므로 RPM 만 바꾼다.
 // steady: 고정 RPM 루프. 웜업 1초 후 녹음, 원본 README 방식 크로스페이드(c = 2 * 120/rpm 초)로 이음새를 만든다.
 // 출력: 16-bit mono 48kHz WAV, 피크 -1 dBFS 로 정규화. 정규화 전 피크/RMS 도 표준출력에 찍는다(엔진끼리 음량 비교용).
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EngineModel, DEFAULT_SEEDS } from './engine-model.mjs';
@@ -48,6 +48,28 @@ export function renderSteady(preset, rpm, seconds, warmupSec = 1) {
   return crossfadeLoop(rec, Math.round(cfSec * SAMPLE_RATE));
 }
 
+// 루프 하나: 엔진 사이클(120/rpm 초)의 정수배 길이. 이음새는 원본 방식(반쪽 교체 + 가운데 크로스페이드, 길이 2사이클)으로 맞춘다.
+export function renderLoop(preset, rpm, cycles, sr, warmupSec = 1) {
+  const cycleSec = 120 / rpm;
+  const L = Math.round(cycles * cycleSec * sr);
+  const cf = Math.round(2 * cycleSec * sr);
+  const rec = renderSchedule(preset, () => rpm, (L + Math.floor(cf / 2)) / sr, warmupSec, sr);
+  return crossfadeLoop(rec, cf); // 길이 = L
+}
+
+// 루프 세트 (config: tools/engine-render/v10-loops.json). 17개 전체에서 가장 큰 피크가 targetDbfs 가 되도록 같은 배율을 쓴다(공통 게인).
+export function renderLoopSet(config, baseDir) {
+  const preset = JSON.parse(readFileSync(resolve(baseDir, config.preset), 'utf8'));
+  const sets = [];
+  for (let rpm = config.rpmMin; rpm <= config.rpmMax; rpm += config.rpmStep) {
+    const cycles = Math.max(1, Math.round(config.targetSeconds / (120 / rpm)));
+    sets.push({ rpm, cycles, samples: renderLoop(preset, rpm, cycles, config.sampleRate, config.warmupSeconds) });
+  }
+  const maxPeak = Math.max(...sets.map((x) => peak(x.samples)));
+  const gain = Math.pow(10, config.targetDbfs / 20) / maxPeak;
+  return { sets, gain };
+}
+
 function argValue(args, name, fallback) {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : fallback;
@@ -61,6 +83,24 @@ function stats(raw) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const here = dirname(fileURLToPath(import.meta.url));
   const [, , mode, ...args] = process.argv;
+  if (mode === 'loops') {
+    // 루프 세트 렌더: node render.mjs loops --config v10-loops.json
+    const configPath = resolve(argValue(args, '--config', join(here, 'v10-loops.json')));
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    const baseDir = dirname(configPath);
+    const outDir = resolve(baseDir, config.output);
+    mkdirSync(outDir, { recursive: true });
+    const { sets, gain } = renderLoopSet(config, baseDir);
+    const report = [];
+    for (const { rpm, cycles, samples } of sets) {
+      const file = join(outDir, `rpm-${rpm}.wav`);
+      const norm = Float64Array.from(samples, (x) => x * gain);
+      writeWav(file, norm, config.sampleRate);
+      report.push({ rpm, cycles, samples: samples.length, seconds: +(samples.length / config.sampleRate).toFixed(4), peakDb: +toDb(peak(norm)).toFixed(2), rmsDb: +toDb(rms(norm)).toFixed(2) });
+    }
+    console.log(JSON.stringify({ outDir, commonGainDb: +toDb(gain).toFixed(2), loops: report }, null, 1));
+    process.exit(0);
+  }
   const presetPath = resolve(argValue(args, '--preset', join(here, 'presets', 'v10a.json')));
   const outPath = resolve(argValue(args, '--out', 'out.wav'));
   const preset = JSON.parse(readFileSync(presetPath, 'utf8'));

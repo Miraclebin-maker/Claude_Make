@@ -1,9 +1,12 @@
 // 사운드 컨트롤러: AudioContext, 프로필 전환, 볼륨, 경고음, 가속 미리듣기.
-// 모든 주행 사운드는 ev.js 의 Web Audio 노드로 합성한다 (zimmer, plaid, motor, turbine).
+// zimmer/plaid 는 ev.js 의 오실레이터로, v10 은 미리 렌더한 RPM 루프(v10.js)를 가상 변속기(rpm-model.js)로 재생한다.
 import { startEv } from './ev.js';
+import { createRpmModel, stepRpm } from './rpm-model.js';
+import { loadV10Buffers, createV10Graph } from './v10.js';
 import * as settings from '../settings.js';
 
-export const SOUND_PROFILES = Object.freeze(['off', 'zimmer', 'plaid', 'motor', 'turbine']);
+export const SOUND_PROFILES = Object.freeze(['off', 'zimmer', 'plaid', 'v10']);
+const V10_BASE = new URL('../../audio/v10/', import.meta.url);
 
 export function createAudio() {
   let ctx = null;
@@ -12,6 +15,9 @@ export function createAudio() {
   let readyPromise = null;
   let profile = 'off';
   let ev = null;
+  let v10Player = null;
+  let v10Promise = null;
+  let rpmModel = createRpmModel();
   let volume = settings.getVolume();
   let chimeOn = false; // 기본 OFF (main.js 가 저장값으로 덮어씀)
   let previewing = false;
@@ -23,6 +29,10 @@ export function createAudio() {
 
   function setStatus(s) {
     document.documentElement.dataset.audio = s;
+  }
+
+  function setV10Status(s) {
+    document.documentElement.dataset.v10 = s;
   }
 
   async function ensureContext() {
@@ -54,10 +64,32 @@ export function createAudio() {
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
   }
 
-  function stopEv() {
+  // V10 루프 17개 로드·디코드 (한 번만). 실패하면 다음 선택 때 다시 시도한다.
+  function loadV10() {
+    if (!v10Promise) {
+      setV10Status('loading');
+      v10Promise = loadV10Buffers(ctx, V10_BASE)
+        .then((buffers) => {
+          setV10Status('ready');
+          return buffers;
+        })
+        .catch((err) => {
+          setV10Status('error');
+          v10Promise = null;
+          throw err;
+        });
+    }
+    return v10Promise;
+  }
+
+  function stopAll() {
     if (ev) {
       ev.stop();
       ev = null;
+    }
+    if (v10Player) {
+      v10Player.stop();
+      v10Player = null;
     }
   }
 
@@ -66,15 +98,23 @@ export function createAudio() {
     if (!SOUND_PROFILES.includes(key)) return;
     profile = key;
     settings.setSound(key);
-    stopEv();
+    document.documentElement.dataset.sound = key;
+    stopAll();
     if (key === 'off') return;
     try {
       await ensureContext();
+      if (key === 'v10') {
+        const buffers = await loadV10();
+        if (profile !== key || closed) return;
+        rpmModel = createRpmModel();
+        v10Player = createV10Graph(ctx, buffers, bus, ctx.currentTime);
+      } else {
+        if (profile !== key || closed) return;
+        ev = startEv(key, ctx, bus);
+      }
     } catch (err) {
       return;
     }
-    if (profile !== key) return; // 기다리는 사이 다른 프로필이 선택됨
-    ev = startEv(key, ctx, bus);
   }
 
   // 60Hz 호출. 속도/페달/kW 는 telemetry 또는 가속 미리듣기 값. peakKw 는 kW 정규화 기준.
@@ -87,11 +127,17 @@ export function createAudio() {
     let pedal = pedalPct;
     if (previewing) {
       previewStep = Math.min(100, previewStep + 150 * dt);
-      speed = previewStep * 1.6;
       pedal = previewStep;
+      // V10: 정차 중 페달 경로(공회전 레브)를 그대로 쓴다. 오실레이터 계열은 속도 흉내.
+      speed = v10Player ? 0 : previewStep * 1.6;
     }
 
-    if (ev) ev.update(speed, pedal, previewing ? 0 : kw, peakKw);
+    if (v10Player) {
+      const r = stepRpm(rpmModel, { speedKmh: speed, pedalPct: pedal, dtSec: dt });
+      v10Player.update(r.rpm, pedal, previewing ? 0 : kw, ctx.currentTime);
+    } else if (ev) {
+      ev.update(speed, pedal, previewing ? 0 : kw, peakKw);
+    }
   }
 
   function setPreview(on) {
@@ -146,13 +192,14 @@ export function createAudio() {
     async close() {
       closed = true;
       previewing = false;
-      stopEv();
+      stopAll();
       profile = 'off';
       const c = ctx;
       ctx = null;
       master = null;
       bus = null;
       readyPromise = null;
+      v10Promise = null;
       setStatus('closed');
       if (c) {
         try { await c.close(); } catch (e) { /* 이미 닫힘 */ }

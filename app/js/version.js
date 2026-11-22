@@ -1,5 +1,5 @@
 // 배포마다 올린다. sw.js 의 CACHE 이름(tsl-shell-<버전>)과 같아야 한다 (tests/version.test.mjs 가 검사).
-export const APP_VERSION = '2.2.0';
+export const APP_VERSION = '2.3.0';
 
 // 새로고침 시 HTTP 캐시를 새 응답으로 채울 파일 목록 (sw.js SHELL 과 같아야 한다, tests/version.test.mjs 가 검사).
 export const APP_FILES = [
@@ -21,5 +21,23 @@ export const APP_FILES = [
   './js/update-policy.js',
   './js/audio/audio.js',
   './js/audio/ev.js',
-  './js/audio/ev-params.js',
+  './js/audio/v10.js',
+  './js/audio/rpm-model.js',
+  './audio/v10/rpm-1000.wav',
+  './audio/v10/rpm-1500.wav',
+  './audio/v10/rpm-2000.wav',
+  './audio/v10/rpm-2500.wav',
+  './audio/v10/rpm-3000.wav',
+  './audio/v10/rpm-3500.wav',
+  './audio/v10/rpm-4000.wav',
+  './audio/v10/rpm-4500.wav',
+  './audio/v10/rpm-5000.wav',
+  './audio/v10/rpm-5500.wav',
+  './audio/v10/rpm-6000.wav',
+  './audio/v10/rpm-6500.wav',
+  './audio/v10/rpm-7000.wav',
+  './audio/v10/rpm-7500.wav',
+  './audio/v10/rpm-8000.wav',
+  './audio/v10/rpm-8500.wav',
+  './audio/v10/rpm-9000.wav',
 ];

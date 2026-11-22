@@ -56,11 +56,17 @@ app/
   js/demo.js             데모 데이터
   js/plaid.js            플래드 워프 캔버스
   js/audio/audio.js      AudioContext, 프로필 전환, 볼륨, 경고음
-  js/audio/ev.js         주행 사운드 (zimmer, plaid, motor, turbine)
-  js/audio/ev-params.js  motor/turbine 파라미터 계산 (순수 함수)
+  js/audio/ev.js         주행 사운드 (zimmer, plaid 오실레이터)
+  js/audio/v10.js        V10 사운드: 루프 17개 재생, 등전력 크로스페이드 (순수 함수 포함)
+  js/audio/rpm-model.js  가상 7단 변속기 (속도·페달 -> RPM, 순수 함수)
+  audio/v10/rpm-*.wav    V10 루프 17개 (32kHz, 1000~9000rpm)
   js/gauge.js            신규 테마(arc, twin, hud) SVG 게이지
-tests/                   protocol / ev-params 단위 테스트, smoke 스모크
+tools/engine-render/     enginesound(MIT) 물리 모델 포팅과 루프 렌더러
+tests/                   protocol / rpm-model / v10 / v10-loops / engine-model 단위 테스트, smoke 스모크
 ```
+
+V10 루프 다시 만들기 (WAV 를 바꿀 때만):
+`cd tools/engine-render && node render.mjs loops --config v10-loops.json`
 
 ## 읽기 전용 원칙
 
