@@ -1,0 +1,2080 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>TSL 디지털 계기판 클러스터</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Menlo', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+        }
+        html, body {
+            width: 100%;
+            height: 100dvh;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #121316;
+            color: #F2F3F5;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-variant-numeric: tabular-nums;
+        }
+        .hud-mirror {
+            transform: scaleY(-1);
+        }
+        .speed-num {
+            font-size: clamp(3.6rem, min(20vw, 31dvh), 8.2rem);
+            line-height: 0.95;
+        }
+        .speed-num-dial {
+            font-size: clamp(2.8rem, min(14vw, 23dvh), 5.6rem);
+            line-height: 0.95;
+        }
+        @keyframes turnBlink {
+            0%, 49% { opacity: 1; }
+            50%, 100% { opacity: 0.18; }
+        }
+        .turn-active {
+            animation: turnBlink 0.75s infinite;
+            color: #22C55E !important;
+            filter: drop-shadow(0 0 12px rgba(34, 197, 94, 0.75));
+        }
+        .btn-press {
+            transition: transform 0.1s ease, background-color 0.15s ease, border-color 0.15s ease;
+        }
+        .btn-press:active {
+            transform: scale(0.96);
+        }
+        /* 가로모드(모바일 랜드스케이프) 높이 최적화 */
+        @media (orientation: landscape) and (max-height: 540px) {
+            .top-bar-compact {
+                padding-top: 0.35rem !important;
+                padding-bottom: 0.35rem !important;
+            }
+            .center-stage-compact {
+                padding-top: 0.2rem !important;
+                padding-bottom: 0.2rem !important;
+            }
+            .bottom-dock-compact {
+                padding-top: 0.35rem !important;
+                padding-bottom: 0.45rem !important;
+            }
+            .speed-num {
+                font-size: clamp(3.2rem, 26dvh, 5.8rem) !important;
+            }
+            .speed-num-dial {
+                font-size: clamp(2.5rem, 20dvh, 4.4rem) !important;
+            }
+        }
+    </style>
+</head>
+<body class="flex flex-col justify-between bg-[#121316] text-[#F2F3F5]">
+
+    <!-- 플래드(Plaid) 가속 워프 배경 캔버스 -->
+    <canvas id="plaid-canvas" class="fixed inset-0 w-full h-full pointer-events-none z-0 opacity-0 transition-opacity duration-300"></canvas>
+
+    <!-- ========================================================================
+         1. 상단 플랫 그리드 상태 바 (폴스타 / 카플레이 미니멀 헤더)
+         ======================================================================== -->
+    <header class="top-bar-compact relative z-10 w-full max-w-5xl mx-auto px-4 sm:px-6 pt-3.5 pb-2 border-b border-[#24262B] grid grid-cols-3 items-center gap-2 shrink-0">
+        <!-- 좌측: BLE 연결 및 모듈 상태 -->
+        <div class="flex items-center gap-1.5 justify-start min-w-0">
+            <button id="btn-ble" onclick="toggleBleConnection()" class="btn-press px-2.5 py-1.5 rounded-lg bg-[#1A1C20] border border-[#2B2E35] hover:border-[#3E424B] text-[11px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0">
+                <span id="ble-dot" class="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span>
+                <span id="ble-label">BLE 연결</span>
+            </button>
+            <span id="hw-badge" class="hidden sm:inline-block px-2 py-1 rounded-md bg-[#1A1C20] border border-[#24262B] text-[#9CA3AF] font-mono text-[10px] font-semibold whitespace-nowrap shrink-0">HW-6</span>
+        </div>
+
+        <!-- 중앙: 기어 인디케이터 (P R N D) -->
+        <div class="flex items-center justify-center">
+            <div class="inline-flex items-center gap-3 sm:gap-4 px-3.5 py-1 rounded-lg bg-[#1A1C20] border border-[#24262B] font-mono text-xs sm:text-sm font-bold whitespace-nowrap">
+                <span id="gear-1" class="text-[#F2F3F5]">P</span>
+                <span id="gear-2" class="text-[#4B505B]">R</span>
+                <span id="gear-3" class="text-[#4B505B]">N</span>
+                <span id="gear-4" class="text-[#4B505B]">D</span>
+            </div>
+        </div>
+
+        <!-- 우측: AP 상태, 데모, 전체화면, WakeLock, 비밀번호 -->
+        <div class="flex items-center gap-1.5 justify-end shrink-0">
+            <div id="ap-pill" class="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1A1C20] border border-[#24262B] text-[11px] font-semibold text-[#9CA3AF] whitespace-nowrap">
+                <span id="ap-dot" class="w-1.5 h-1.5 rounded-full bg-[#4B505B]"></span>
+                <span id="ap-text">AP 대기</span>
+            </div>
+
+            <button id="btn-demo" onclick="toggleDemoMode()" class="btn-press px-2.5 py-1.5 rounded-lg bg-[#1A1C20] border border-[#2B2E35] text-[#D1D5DB] text-[11px] font-semibold whitespace-nowrap">
+                데모
+            </button>
+
+            <button id="btn-fullscreen" onclick="toggleFullscreen()" title="전체화면 전환" class="btn-press w-8 h-8 rounded-lg bg-[#1A1C20] border border-[#2B2E35] flex items-center justify-center text-[#9CA3AF] shrink-0">
+                <svg id="fs-icon-expand" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+                <svg id="fs-icon-compress" class="w-3.5 h-3.5 hidden text-[#D97706]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 9V4H4m0 0l5 5M15 9V4h5m0 0l-5 5M9 15v5H4m0 0l5-5M15 15v5h5m0 0l-5-5"/></svg>
+            </button>
+
+            <button id="btn-wakelock" onclick="toggleWakeLock()" title="화면 꺼짐 방지" class="btn-press w-8 h-8 rounded-lg bg-[#1A1C20] border border-[#2B2E35] flex items-center justify-center text-[#9CA3AF] shrink-0">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+            </button>
+
+            <button onclick="openPasswordModal()" title="BLE 비밀번호 설정" class="btn-press w-8 h-8 rounded-lg bg-[#1A1C20] border border-[#2B2E35] flex items-center justify-center text-[#9CA3AF] shrink-0">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- ========================================================================
+         2. 중앙 미니멀 클러스터 그리드 스테이지 (플랫 3행 그리드 구조)
+         ======================================================================== -->
+    <main id="cluster-stage" class="center-stage-compact relative z-10 flex-1 min-h-0 w-full max-w-5xl mx-auto px-4 sm:px-6 py-2.5 flex flex-col justify-between">
+
+        <!-- 상단 행: 1px 파워/회생 플랫 바 & 3열 그리드 보조 지표 -->
+        <div class="space-y-2.5 shrink-0">
+            <!-- 회생제동(좌) / 가속출력(우) 플랫 바 -->
+            <div class="w-full h-1.5 bg-[#1E2026] grid grid-cols-2 overflow-hidden">
+                <div class="flex justify-end border-r border-[#2E313A]">
+                    <div id="bar-regen" class="h-full bg-[#22C55E] transition-all duration-150" style="width: 0%"></div>
+                </div>
+                <div class="flex justify-start">
+                    <div id="bar-power" class="h-full bg-[#D97706] transition-all duration-150" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <!-- 3열 플랫 정보 그리드 (제한속도 | 모터 출력 | 배터리 잔량) -->
+            <div class="grid grid-cols-3 items-center pt-0.5">
+                <!-- 좌측: 제한속도 표지판 & 모바일 AP 상태 -->
+                <div class="flex items-center gap-2.5 justify-start">
+                    <div id="limit-sign" class="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-[#F2F3F5] border-[3px] border-rose-600 flex flex-col items-center justify-center text-[#121316] shrink-0">
+                        <span class="text-[6px] font-extrabold tracking-tighter leading-none text-rose-600">LIMIT</span>
+                        <span id="val-limit" class="text-xs sm:text-sm font-mono font-extrabold leading-tight">--</span>
+                    </div>
+                    <div class="md:hidden text-[11px] font-semibold text-[#9CA3AF] whitespace-nowrap">
+                        <span id="ap-text-mobile">AP 대기</span>
+                    </div>
+                </div>
+
+                <!-- 중앙: 총 출력 (kW) 및 전/후방 모터 분배 -->
+                <div class="text-center whitespace-nowrap">
+                    <div class="font-mono text-sm sm:text-base font-bold text-[#F2F3F5]">
+                        <span id="val-total-kw">0</span> <span class="text-xs font-medium text-[#9CA3AF]">kW</span>
+                    </div>
+                    <div class="font-mono text-[11px] text-[#7C828D] mt-0.5">
+                        F:<span id="val-front-kw">0</span> · R:<span id="val-rear-kw">0</span>
+                    </div>
+                </div>
+
+                <!-- 우측: 배터리 잔량 (%) 및 주행가능거리 -->
+                <div class="text-right whitespace-nowrap">
+                    <div class="font-mono text-sm sm:text-base font-bold text-[#F2F3F5]">
+                        <span id="val-soc">--</span><span class="text-xs text-[#9CA3AF]">%</span>
+                    </div>
+                    <div class="font-mono text-[11px] text-[#9CA3AF] mt-0.5">
+                        <span id="val-range">--</span> km
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 중단 행: 방향지시등 & 대형 고정폭 디지털 속도계 -->
+        <div class="relative flex-1 min-h-0 grid grid-cols-[56px_1fr_56px] sm:grid-cols-[88px_1fr_88px] items-center my-auto">
+            <!-- 좌측 방향지시등 -->
+            <div class="flex justify-start">
+                <svg id="turn-left" class="w-11 h-11 sm:w-14 sm:h-14 text-[#2C2F37] transition-colors" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M11 4L3 12l8 8v-5h10V9H11V4z"/>
+                </svg>
+            </div>
+
+            <!-- 중앙 고정폭 디지털 속도계 -->
+            <div class="relative flex flex-col items-center justify-center">
+                <!-- 테마 2: 대형 링 게이지 (3자리 속도도 링 안에 여유롭게 수용) -->
+                <svg id="classic-dial-svg" class="hidden absolute w-64 h-64 sm:w-80 sm:h-80 -rotate-90 pointer-events-none" viewBox="0 0 280 280">
+                    <circle cx="140" cy="140" r="126" fill="none" stroke="#1E2026" stroke-width="6" stroke-dasharray="595 800"/>
+                    <circle id="classic-dial-arc" cx="140" cy="140" r="126" fill="none" stroke="#D97706" stroke-width="6" stroke-linecap="round" stroke-dasharray="0 800"/>
+                </svg>
+
+                <!-- 테마 3: 트랙 텔레메트리 수평 브래킷 프레임 -->
+                <div id="track-frame-box" class="hidden absolute inset-x-1 sm:inset-x-6 h-44 sm:h-52 border-y border-[#343842] bg-[#16181D]/60 pointer-events-none flex flex-col justify-between py-2 px-3">
+                    <!-- 상단: 레이스 시프트 LED 바 (10구) + PEAK 출력 -->
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-[9px] font-mono font-bold tracking-widest text-[#9CA3AF]">SHIFT</span>
+                        <div id="track-shift-leds" class="flex-1 max-w-[200px] grid grid-cols-10 gap-1 h-2">
+                            <span class="rounded-xs bg-[#24262B] transition-colors duration-75"></span>
+                            <span class="rounded-xs bg-[#24262B] transition-colors duration-75"></span>
+                            <span class="rounded-xs bg-[#24262B] transition-colors duration-75"></span>
+                            <span class="rounded-xs bg-[#24262B] transition-colors duration-75"></span>
+                            <span class="rounded-xs bg-[#24262B] transition-colors duration-75"></span>
+                            <span class="rounded-xs bg-[#24262B] transition-colors duration-75"></span>
+                            <span class="rounded-xs bg-[#24262B] transition-colors duration-75"></span>
+                            <span class="rounded-xs bg-[#24262B] transition-colors duration-75"></span>
+                            <span class="rounded-xs bg-[#24262B] transition-colors duration-75"></span>
+                            <span class="rounded-xs bg-[#24262B] transition-colors duration-75"></span>
+                        </div>
+                        <span id="track-peak-badge" class="text-[9px] font-mono font-bold text-[#D97706]">PK 0kW</span>
+                    </div>
+
+                    <!-- 중단 좌·우: 스로틀(좌) & 회생/제동(우) 수직 리얼타임 바 -->
+                    <div class="flex-1 my-1.5 flex items-center justify-between">
+                        <div class="flex items-center gap-1.5 h-full">
+                            <div class="w-2 h-full bg-[#1E2026] rounded-xs overflow-hidden flex flex-col justify-end">
+                                <div id="track-thr-vbar" class="w-full bg-[#D97706] transition-all duration-100" style="height: 0%"></div>
+                            </div>
+                            <div class="flex flex-col justify-between h-full text-[9px] font-mono text-[#7C828D]">
+                                <span>THR</span>
+                                <span id="track-pedal-bar-txt" class="text-[#F2F3F5] font-bold">0%</span>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center gap-1.5 h-full">
+                            <div class="flex flex-col justify-between h-full text-right text-[9px] font-mono text-[#7C828D]">
+                                <span>REG</span>
+                                <span id="track-regen-txt" class="text-[#22C55E] font-bold">0kW</span>
+                            </div>
+                            <div class="w-2 h-full bg-[#1E2026] rounded-xs overflow-hidden flex flex-col justify-end">
+                                <div id="track-reg-vbar" class="w-full bg-[#22C55E] transition-all duration-100" style="height: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 하단: 종방향 가속/감속 G-포스 미터 -->
+                    <div class="flex items-center justify-between gap-2 text-[9px] font-mono">
+                        <span class="text-[#7C828D]">LONG-G</span>
+                        <div class="flex-1 max-w-[160px] h-1.5 bg-[#1E2026] grid grid-cols-2 overflow-hidden">
+                            <div class="flex justify-end border-r border-[#343842]">
+                                <div id="track-g-dec" class="h-full bg-rose-500 transition-all duration-100" style="width: 0%"></div>
+                            </div>
+                            <div class="flex justify-start">
+                                <div id="track-g-acc" class="h-full bg-[#38BDF8] transition-all duration-100" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <span id="track-g-val" class="text-[#F2F3F5] font-bold w-11 text-right">0.00G</span>
+                    </div>
+                </div>
+
+                <div id="val-speed" class="speed-num font-mono font-bold tracking-tight text-[#F2F3F5] transition-all">0</div>
+
+                <div class="flex items-center gap-3 mt-1.5 sm:mt-2 whitespace-nowrap">
+                    <span id="val-unit" class="text-xs font-bold tracking-[0.2em] text-[#9CA3AF]">KM/H</span>
+                    <span class="w-1 h-1 rounded-full bg-[#3A3E47]"></span>
+                    <span class="text-xs font-mono font-semibold text-[#D97706]">PEDAL <span id="val-pedal">0</span>%</span>
+                </div>
+            </div>
+
+            <!-- 우측 방향지시등 -->
+            <div class="flex justify-end">
+                <svg id="turn-right" class="w-11 h-11 sm:w-14 sm:h-14 text-[#2C2F37] transition-colors" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M13 4l8 8-8 8v-5H3V9h10V4z"/>
+                </svg>
+            </div>
+        </div>
+
+        <!-- 핸들 잡기 경고 알림 배너 (절대 위치 오버레이로 속도 숫자 흔들림 방지) -->
+        <div id="handson-alert" class="hidden pointer-events-none absolute bottom-10 left-1/2 -translate-x-1/2 z-20 px-4 py-1.5 rounded-lg bg-[#1A1C20]/95 border border-amber-500/60 text-amber-400 text-xs font-bold tracking-wide shadow-lg whitespace-nowrap">
+            스티어링 휠을 가볍게 잡아주세요
+        </div>
+
+        <!-- 전방 과속 단속 카메라 접근 & FSD Chill 자동 전환 오버레이 배너 -->
+        <div id="cam-alert-banner" class="hidden pointer-events-none absolute top-14 left-1/2 -translate-x-1/2 z-20 px-3.5 py-2 rounded-xl bg-[#1A1C20]/95 border border-rose-500/80 shadow-xl flex items-center gap-3 whitespace-nowrap">
+            <div class="w-8 h-8 rounded-full bg-rose-600 text-white font-mono text-xs font-extrabold flex items-center justify-center shrink-0">
+                <span id="cam-alert-limit">80</span>
+            </div>
+            <div class="text-left">
+                <div class="text-xs font-bold text-[#F2F3F5] flex items-center gap-1.5">
+                    <span>전방 단속 카메라</span>
+                    <span id="cam-alert-dist" class="font-mono text-rose-400">320m</span>
+                </div>
+                <div id="cam-alert-fsd" class="text-[10px] font-semibold text-[#38BDF8]">FSD 프로필 → Chill 자동 전환됨</div>
+            </div>
+        </div>
+
+        <!-- 하단 행: 3열 그리드 주행 메타데이터 (ODO | 0-100 제로백 | 외기/실내 온도) -->
+        <div class="grid grid-cols-3 items-center text-[11px] font-mono text-[#9CA3AF] pt-1.5 border-t border-[#1E2026] shrink-0 whitespace-nowrap">
+            <div class="text-left">ODO <span id="val-odo" class="text-[#D1D5DB]">0.0</span> km</div>
+            <div class="text-center">
+                <button onclick="toggleZeroToHundred()" id="btn-0100" class="btn-press px-2.5 py-0.5 rounded-md bg-[#1A1C20] border border-[#2B2E35] text-[#D1D5DB] font-semibold">
+                    0-100: 대기
+                </button>
+            </div>
+            <div class="text-right"><span id="val-cabin-temp" class="text-[#D1D5DB]">--</span> / <span id="val-amb-temp">--</span>°C</div>
+        </div>
+    </main>
+
+    <!-- ========================================================================
+         3. 미니멀 팝오버 서랍 패널 (하단 퀵 메뉴 클릭 시 노출)
+         ======================================================================== -->
+    <div id="drawer-backdrop" onclick="closeAllDrawers()" class="hidden fixed inset-0 z-20 bg-black/50"></div>
+
+    <!-- 서랍 1: 타이어 공기압(TPMS) & 브레이크 온도 -->
+    <div id="drawer-tpms" class="drawer-panel hidden fixed bottom-16 left-1/2 -translate-x-1/2 z-30 w-[92vw] max-w-md bg-[#1A1C20] border border-[#2E313A] rounded-2xl p-4 shadow-2xl space-y-3">
+        <div class="flex items-center justify-between border-b border-[#24262B] pb-2">
+            <span class="text-xs font-bold text-[#F2F3F5]">타이어 공기압 (PSI) & 브레이크 온도</span>
+            <button onclick="closeAllDrawers()" class="text-xs text-[#9CA3AF] px-1">닫기</button>
+        </div>
+        <div class="grid grid-cols-2 gap-2 font-mono text-xs">
+            <div class="p-3 rounded-xl bg-[#121316] border border-[#24262B] flex justify-between items-center">
+                <span class="font-sans text-[11px] text-[#9CA3AF]">전좌 (FL)</span>
+                <div class="text-right"><div id="tpms-0" class="font-bold text-[#F2F3F5]">-- PSI</div><div id="brk-0" class="text-[10px] text-[#7C828D]">--°C</div></div>
+            </div>
+            <div class="p-3 rounded-xl bg-[#121316] border border-[#24262B] flex justify-between items-center">
+                <span class="font-sans text-[11px] text-[#9CA3AF]">전우 (FR)</span>
+                <div class="text-right"><div id="tpms-1" class="font-bold text-[#F2F3F5]">-- PSI</div><div id="brk-1" class="text-[10px] text-[#7C828D]">--°C</div></div>
+            </div>
+            <div class="p-3 rounded-xl bg-[#121316] border border-[#24262B] flex justify-between items-center">
+                <span class="font-sans text-[11px] text-[#9CA3AF]">후좌 (RL)</span>
+                <div class="text-right"><div id="tpms-2" class="font-bold text-[#F2F3F5]">-- PSI</div><div id="brk-2" class="text-[10px] text-[#7C828D]">--°C</div></div>
+            </div>
+            <div class="p-3 rounded-xl bg-[#121316] border border-[#24262B] flex justify-between items-center">
+                <span class="font-sans text-[11px] text-[#9CA3AF]">후우 (RR)</span>
+                <div class="text-right"><div id="tpms-3" class="font-bold text-[#F2F3F5]">-- PSI</div><div id="brk-3" class="text-[10px] text-[#7C828D]">--°C</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 서랍 2: 고전압 배터리(Type 208) & 공조/고도 -->
+    <div id="drawer-battery" class="drawer-panel hidden fixed bottom-16 left-1/2 -translate-x-1/2 z-30 w-[92vw] max-w-md bg-[#1A1C20] border border-[#2E313A] rounded-2xl p-4 shadow-2xl space-y-3">
+        <div class="flex items-center justify-between border-b border-[#24262B] pb-2">
+            <span class="text-xs font-bold text-[#F2F3F5]">고전압 배터리 팩 & 시스템</span>
+            <button onclick="requestHvPack208()" class="text-[11px] font-semibold text-[#D97706] px-2 py-0.5 rounded-md bg-[#121316] border border-[#2B2E35] btn-press">팩 갱신</button>
+        </div>
+        <div class="grid grid-cols-2 gap-2 font-mono text-xs">
+            <div class="p-2.5 rounded-xl bg-[#121316] border border-[#24262B] flex justify-between"><span class="font-sans text-[#9CA3AF]">팩 전압</span><span id="hv-vol" class="font-bold text-[#F2F3F5]">-- V</span></div>
+            <div class="p-2.5 rounded-xl bg-[#121316] border border-[#24262B] flex justify-between"><span class="font-sans text-[#9CA3AF]">팩 전류</span><span id="hv-cur" class="font-bold text-[#F2F3F5]">-- A</span></div>
+            <div class="p-2.5 rounded-xl bg-[#121316] border border-[#24262B] flex justify-between"><span class="font-sans text-[#9CA3AF]">잔여 용량</span><span id="hv-rem" class="font-bold text-[#22C55E]">-- kWh</span></div>
+            <div class="p-2.5 rounded-xl bg-[#121316] border border-[#24262B] flex justify-between"><span class="font-sans text-[#9CA3AF]">만충 용량</span><span id="hv-full" class="font-bold text-[#F2F3F5]">-- kWh</span></div>
+            <div class="p-2.5 rounded-xl bg-[#121316] border border-[#24262B] flex justify-between"><span class="font-sans text-[#9CA3AF]">배터리 온도</span><span id="val-batt-temp" class="font-bold text-[#D97706]">-- °C</span></div>
+            <div class="p-2.5 rounded-xl bg-[#121316] border border-[#24262B] flex justify-between"><span class="font-sans text-[#9CA3AF]">고도 / 공조</span><span id="val-alt-hvac" class="font-bold text-[#D1D5DB]">0m / 0W</span></div>
+        </div>
+    </div>
+
+    <!-- 서랍 3: 주행 트립 & 제로백 기록 -->
+    <div id="drawer-trip" class="drawer-panel hidden fixed bottom-16 left-1/2 -translate-x-1/2 z-30 w-[92vw] max-w-md bg-[#1A1C20] border border-[#2E313A] rounded-2xl p-4 shadow-2xl space-y-3">
+        <div class="flex items-center justify-between border-b border-[#24262B] pb-2">
+            <span class="text-xs font-bold text-[#F2F3F5]">주행 퍼포먼스 & 트립 기록</span>
+            <button onclick="resetTripStats()" class="text-[11px] font-semibold text-rose-400 px-2 py-0.5 rounded-md bg-[#121316] border border-[#2B2E35] btn-press">초기화</button>
+        </div>
+        <div class="grid grid-cols-3 gap-2 text-center font-mono">
+            <div class="p-3 rounded-xl bg-[#121316] border border-[#24262B]">
+                <div class="font-sans text-[10px] text-[#9CA3AF]">주행 거리</div>
+                <div id="trip-dist" class="text-sm font-bold text-[#F2F3F5] mt-1">0.0 km</div>
+            </div>
+            <div class="p-3 rounded-xl bg-[#121316] border border-[#24262B]">
+                <div class="font-sans text-[10px] text-[#9CA3AF]">최고 속도</div>
+                <div id="trip-max-spd" class="text-sm font-bold text-[#D97706] mt-1">0 km/h</div>
+            </div>
+            <div class="p-3 rounded-xl bg-[#121316] border border-[#24262B]">
+                <div class="font-sans text-[10px] text-[#9CA3AF]">최대 출력</div>
+                <div id="trip-max-kw" class="text-sm font-bold text-[#22C55E] mt-1">0 kW</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 서랍 4: 가상 배기음 사운드 & 클러스터 테마 설정 -->
+    <div id="drawer-sound" class="drawer-panel hidden fixed bottom-16 left-1/2 -translate-x-1/2 z-30 w-[92vw] max-w-md bg-[#1A1C20] border border-[#2E313A] rounded-2xl p-4 shadow-2xl space-y-3">
+        <div class="flex items-center justify-between border-b border-[#24262B] pb-2">
+            <span class="text-xs font-bold text-[#F2F3F5]">주행 사운드 합성 엔진</span>
+            <button onmousedown="previewAccelSound(true)" onmouseup="previewAccelSound(false)" onmouseleave="previewAccelSound(false)" ontouchstart="previewAccelSound(true)" ontouchend="previewAccelSound(false)" class="px-2.5 py-1 rounded-md bg-[#121316] border border-[#D97706]/50 text-[#D97706] text-[11px] font-semibold btn-press">
+                가속 사운드 테스트
+            </button>
+        </div>
+        <div class="grid grid-cols-3 gap-1.5 text-[11px] font-semibold">
+            <button onclick="setSoundProfile('off')" id="snd-off" class="py-2 rounded-lg bg-[#F2F3F5] text-[#121316] whitespace-nowrap btn-press">음소거</button>
+            <button onclick="setSoundProfile('zimmer')" id="snd-zimmer" class="py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#D1D5DB] whitespace-nowrap btn-press">한스짐머 EV</button>
+            <button onclick="setSoundProfile('plaid')" id="snd-plaid" class="py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#D1D5DB] whitespace-nowrap btn-press">플래드 워프</button>
+            <button onclick="setSoundProfile('v8')" id="snd-v8" class="py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#D1D5DB] whitespace-nowrap btn-press">V8 머슬카</button>
+            <button onclick="setSoundProfile('gt6')" id="snd-gt6" class="py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#D1D5DB] whitespace-nowrap btn-press">GT 슈퍼카</button>
+            <button onclick="toggleWarningChime()" id="btn-chime" class="py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#22C55E] whitespace-nowrap btn-press">경고음: ON</button>
+        </div>
+
+        <div class="text-xs font-bold text-[#D1D5DB] pt-2 border-t border-[#24262B] flex items-center justify-between">
+            <span>계기판 테마 선택</span>
+            <button onclick="toggleHudMirror()" id="th-mirror" class="px-2 py-0.5 rounded-md bg-[#121316] border border-[#2B2E35] text-[11px] text-[#9CA3AF] btn-press">HUD 반전</button>
+        </div>
+        <div class="grid grid-cols-4 gap-1.5 text-[11px] font-semibold">
+            <button onclick="setClusterTheme('minimal')" id="th-minimal" class="py-2 rounded-lg bg-[#F2F3F5] text-[#121316] whitespace-nowrap btn-press">미니멀</button>
+            <button onclick="setClusterTheme('plaid')" id="th-plaid" class="py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#D1D5DB] whitespace-nowrap btn-press">플래드 워프</button>
+            <button onclick="setClusterTheme('dial')" id="th-dial" class="py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#D1D5DB] whitespace-nowrap btn-press">링 게이지</button>
+            <button onclick="setClusterTheme('track')" id="th-track" class="py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#D1D5DB] whitespace-nowrap btn-press">트랙 모드</button>
+        </div>
+    </div>
+
+    <!-- 서랍 5: 과속 단속 카메라 감지 & FSD 속도 프로필 자동 전환 설정 -->
+    <div id="drawer-camera" class="drawer-panel hidden fixed bottom-16 left-1/2 -translate-x-1/2 z-30 w-[92vw] max-w-md bg-[#1A1C20] border border-[#2E313A] rounded-2xl p-4 shadow-2xl space-y-3">
+        <div class="flex items-center justify-between border-b border-[#24262B] pb-2">
+            <div class="flex items-center gap-2">
+                <span class="text-xs font-bold text-[#F2F3F5]">과속 카메라 FSD 자동 컴포트</span>
+                <span id="gps-fix-badge" class="px-1.5 py-0.5 rounded bg-[#121316] border border-[#2B2E35] font-mono text-[9px] text-[#9CA3AF]">GPS 대기</span>
+            </div>
+            <button onclick="toggleCamAutoChill()" id="btn-cam-enable" class="px-2.5 py-1 rounded-md bg-[#22C55E] text-[#121316] text-[11px] font-bold btn-press">
+                기능 ON
+            </button>
+        </div>
+
+        <!-- 평상시 선호 FSD 프로필 & 감지 거리 설정 -->
+        <div class="grid grid-cols-2 gap-2 text-[11px]">
+            <div class="p-2.5 rounded-xl bg-[#121316] border border-[#24262B] space-y-1.5">
+                <div class="text-[#9CA3AF] font-semibold">통과 후 복귀 프로필</div>
+                <div class="grid grid-cols-2 gap-1 font-semibold">
+                    <button onclick="setPreferredFsdProfile('standard')" id="fsd-pref-standard" class="py-1.5 rounded-md bg-[#F2F3F5] text-[#121316] btn-press">Standard</button>
+                    <button onclick="setPreferredFsdProfile('hurry')" id="fsd-pref-hurry" class="py-1.5 rounded-md bg-[#1A1C20] border border-[#2B2E35] text-[#D1D5DB] btn-press">Hurry</button>
+                </div>
+            </div>
+
+            <div class="p-2.5 rounded-xl bg-[#121316] border border-[#24262B] space-y-1.5">
+                <div class="text-[#9CA3AF] font-semibold">전방 감지 거리</div>
+                <div class="grid grid-cols-2 gap-1 font-mono font-semibold">
+                    <button onclick="setCamDetectRadius(300)" id="cam-dist-300" class="py-1.5 rounded-md bg-[#1A1C20] border border-[#2B2E35] text-[#D1D5DB] btn-press">300m</button>
+                    <button onclick="setCamDetectRadius(500)" id="cam-dist-500" class="py-1.5 rounded-md bg-[#F2F3F5] text-[#121316] btn-press">500m</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 카메라 DB 상태 & 테스트 추가 / JSON·CSV 불러오기 -->
+        <div class="p-2.5 rounded-xl bg-[#121316] border border-[#24262B] space-y-2">
+            <div class="flex items-center justify-between text-[11px]">
+                <span class="text-[#9CA3AF]">등록된 단속 카메라 DB</span>
+                <span id="cam-db-count" class="font-mono font-bold text-[#38BDF8]">0 개</span>
+            </div>
+            <div class="grid grid-cols-3 gap-1.5 text-[11px] font-semibold">
+                <button onclick="addTestCameraAtCurrentPos()" class="py-2 px-1.5 rounded-lg bg-[#1A1C20] border border-[#2B2E35] text-[#D97706] whitespace-nowrap btn-press">+ 테스트 좌표</button>
+                <button onclick="document.getElementById('cam-file-input').click()" class="py-2 px-1.5 rounded-lg bg-[#1A1C20] border border-[#2B2E35] text-[#38BDF8] whitespace-nowrap btn-press">JSON/CSV 열기</button>
+                <button onclick="clearCameraDb()" class="py-2 px-1.5 rounded-lg bg-[#1A1C20] border border-[#2B2E35] text-rose-400 whitespace-nowrap btn-press">DB 초기화</button>
+                <input type="file" id="cam-file-input" accept=".json,.csv,text/csv,application/json" onchange="importCameraFile(event)" class="hidden">
+            </div>
+            <div class="text-[10px] text-[#7C828D] leading-relaxed">
+                CSV 형식: <span class="font-mono text-[#9CA3AF]">위도,경도,제한속도</span> · JSON: <span class="font-mono text-[#9CA3AF]">[{"lat":37.5,"lng":127.0,"limit":80}]</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================================================
+         4. 하단 플랫 5열 그리드 퀵 메뉴 독 (Apple CarPlay / Polestar 스타일)
+         ======================================================================== -->
+    <footer class="bottom-dock-compact relative z-10 w-full max-w-5xl mx-auto px-3 sm:px-6 pb-3.5 pt-2 border-t border-[#24262B] shrink-0">
+        <div class="max-w-xl mx-auto grid grid-cols-5 gap-1.5 sm:gap-2">
+            <button onclick="toggleDrawer('tpms', this)" class="dock-btn btn-press py-2 px-1.5 rounded-xl bg-[#1A1C20] border border-[#2B2E35] text-[11px] font-semibold text-[#D1D5DB] flex items-center justify-center gap-1 whitespace-nowrap">
+                <span class="w-1.5 h-1.5 rounded-full bg-[#22C55E] shrink-0"></span>
+                <span>타이어</span>
+            </button>
+            <button onclick="toggleDrawer('battery', this)" class="dock-btn btn-press py-2 px-1.5 rounded-xl bg-[#1A1C20] border border-[#2B2E35] text-[11px] font-semibold text-[#D1D5DB] flex items-center justify-center gap-1 whitespace-nowrap">
+                <span class="w-1.5 h-1.5 rounded-full bg-[#38BDF8] shrink-0"></span>
+                <span>배터리</span>
+            </button>
+            <button onclick="toggleDrawer('camera', this)" class="dock-btn btn-press py-2 px-1.5 rounded-xl bg-[#1A1C20] border border-[#2B2E35] text-[11px] font-semibold text-[#D1D5DB] flex items-center justify-center gap-1 whitespace-nowrap">
+                <span id="cam-dock-dot" class="w-1.5 h-1.5 rounded-full bg-[#22C55E] shrink-0"></span>
+                <span>카메라</span>
+            </button>
+            <button onclick="toggleDrawer('trip', this)" class="dock-btn btn-press py-2 px-1.5 rounded-xl bg-[#1A1C20] border border-[#2B2E35] text-[11px] font-semibold text-[#D1D5DB] flex items-center justify-center gap-1 whitespace-nowrap">
+                <span class="w-1.5 h-1.5 rounded-full bg-[#D97706] shrink-0"></span>
+                <span>기록</span>
+            </button>
+            <button onclick="toggleDrawer('sound', this)" class="dock-btn btn-press py-2 px-1.5 rounded-xl bg-[#1A1C20] border border-[#2B2E35] text-[11px] font-semibold text-[#D1D5DB] flex items-center justify-center gap-1 whitespace-nowrap">
+                <span id="sound-indicator-dot" class="w-1.5 h-1.5 rounded-full bg-[#7C828D] shrink-0"></span>
+                <span id="sound-dock-label">배기음·테마</span>
+            </button>
+        </div>
+    </footer>
+
+    <!-- 플로팅 토스트 메시지 -->
+    <div id="toast" class="fixed top-14 left-1/2 -translate-x-1/2 z-50 pointer-events-none opacity-0 -translate-y-2 transition-all duration-200">
+        <div class="bg-[#1A1C20] border border-[#2E313A] text-[#F2F3F5] px-4 py-1.5 rounded-lg text-[11px] font-semibold shadow-xl whitespace-nowrap">
+            <span id="toast-msg">알림</span>
+        </div>
+    </div>
+
+    <!-- BLE 비밀번호 설정 모달 -->
+    <div id="pw-modal" class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+        <div class="bg-[#1A1C20] border border-[#2E313A] rounded-2xl p-5 w-full max-w-xs space-y-4 shadow-2xl">
+            <div class="text-sm font-bold text-[#F2F3F5]">TSL 모듈 비밀번호 인증</div>
+            <div class="text-xs text-[#9CA3AF]">모듈 연결 시 자동 전송할 4자리 비밀번호를 입력하세요. (기본값: 1234)</div>
+            <input id="pw-input" type="text" maxlength="4" value="1234" class="w-full bg-[#121316] border border-[#2B2E35] rounded-lg px-3.5 py-2.5 text-center font-mono text-base font-bold tracking-widest text-[#F2F3F5] outline-none">
+            <div class="grid grid-cols-2 gap-2">
+                <button onclick="closePasswordModal()" class="py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-xs font-semibold text-[#9CA3AF]">취소</button>
+                <button onclick="savePasswordAndAuth()" class="py-2 rounded-lg bg-[#F2F3F5] text-xs font-bold text-[#121316]">저장 및 인증</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ============================================================================
+         * 1. 초정밀 물리 모델링 배기음 & 시네마틱 EV 사운드 엔진 (Web Audio API)
+         * ============================================================================
+         */
+        let audioCtx = null;
+        let masterGain = null;
+        let engineBusGain = null;
+        let soundProfile = 'off';
+        let warningChimeEnabled = true;
+        let activeVoices = [];
+        let noiseNode = null;
+        let noiseFilter = null;
+        let noiseGain = null;
+        let isPreviewingSound = false;
+        let lastPreviewPedal = 0;
+        let virtualGearRatio = 1;
+        let lastShiftTime = 0;
+
+        function ensureAudioCtx() {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+
+                const compressor = audioCtx.createDynamicsCompressor();
+                compressor.threshold.value = -14;
+                compressor.knee.value = 18;
+                compressor.ratio.value = 4;
+                compressor.attack.value = 0.005;
+                compressor.release.value = 0.15;
+
+                masterGain = audioCtx.createGain();
+                masterGain.gain.value = 0.34;
+
+                compressor.connect(masterGain);
+                masterGain.connect(audioCtx.destination);
+                engineBusGain = compressor;
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function createPinkNoiseBuffer(ctx) {
+            const bufferSize = ctx.sampleRate * 2;
+            const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+            const output = buffer.getChannelData(0);
+            let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+            for (let i = 0; i < bufferSize; i++) {
+                const white = Math.random() * 2 - 1;
+                b0 = 0.99886 * b0 + white * 0.0555179;
+                b1 = 0.99332 * b1 + white * 0.0750759;
+                b2 = 0.96900 * b2 + white * 0.1538520;
+                b3 = 0.86650 * b3 + white * 0.3104856;
+                b4 = 0.55000 * b4 + white * 0.5329522;
+                b5 = -0.7616 * b5 - white * 0.0168980;
+                output[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.04;
+                b6 = white * 0.115926;
+            }
+            return buffer;
+        }
+
+        function createTubeSaturationCurve(amount) {
+            const samples = 44100;
+            const curve = new Float32Array(samples);
+            for (let i = 0; i < samples; i++) {
+                const x = (i * 2) / samples - 1;
+                curve[i] = ((1 + amount) * x) / (1 + amount * Math.abs(x));
+            }
+            return curve;
+        }
+
+        function createCombustionWave(ctx, harmonics) {
+            const real = new Float32Array(harmonics.length + 1);
+            const imag = new Float32Array(harmonics.length + 1);
+            for (let i = 0; i < harmonics.length; i++) {
+                imag[i + 1] = harmonics[i];
+            }
+            return ctx.createPeriodicWave(real, imag);
+        }
+
+        function createSpaceReverb(ctx) {
+            const len = ctx.sampleRate * 1.4;
+            const impulse = ctx.createBuffer(2, len, ctx.sampleRate);
+            for (let ch = 0; ch < 2; ch++) {
+                const data = impulse.getChannelData(ch);
+                for (let i = 0; i < len; i++) {
+                    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6);
+                }
+            }
+            const convolver = ctx.createConvolver();
+            convolver.buffer = impulse;
+            return convolver;
+        }
+
+        function stopAllVoices() {
+            activeVoices.forEach(v => {
+                try { v.stop(); v.disconnect(); } catch (e) {}
+            });
+            activeVoices = [];
+            if (noiseNode) {
+                try { noiseNode.stop(); noiseNode.disconnect(); } catch (e) {}
+                noiseNode = null;
+            }
+            noiseFilter = null;
+            noiseGain = null;
+        }
+
+        function setSoundProfile(profile) {
+            soundProfile = profile;
+            ['off', 'zimmer', 'plaid', 'v8', 'gt6'].forEach(id => {
+                const btn = document.getElementById(`snd-${id}`);
+                if (!btn) return;
+                if (id === profile) {
+                    btn.className = 'py-2 rounded-lg bg-[#F2F3F5] text-[#121316] whitespace-nowrap btn-press';
+                } else {
+                    btn.className = 'py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#D1D5DB] whitespace-nowrap btn-press';
+                }
+            });
+
+            const labels = {
+                off: '배기음·테마',
+                zimmer: '한스짐머 EV',
+                plaid: '플래드 워프',
+                v8: 'V8 머슬카',
+                gt6: 'GT 슈퍼카'
+            };
+            document.getElementById('sound-dock-label').textContent = labels[profile] || '배기음·테마';
+            document.getElementById('sound-indicator-dot').className = profile === 'off'
+                ? 'w-1.5 h-1.5 rounded-full bg-[#7C828D] shrink-0'
+                : 'w-1.5 h-1.5 rounded-full bg-[#D97706] shrink-0';
+
+            stopAllVoices();
+            if (profile === 'off') {
+                showToast('주행 사운드 음소거');
+                return;
+            }
+
+            ensureAudioCtx();
+            buildSoundGraph(profile);
+            showToast(`주행 사운드: ${labels[profile]} 활성화`);
+        }
+
+        function buildSoundGraph(profile) {
+            if (!audioCtx) return;
+
+            noiseNode = audioCtx.createBufferSource();
+            noiseNode.buffer = createPinkNoiseBuffer(audioCtx);
+            noiseNode.loop = true;
+
+            noiseFilter = audioCtx.createBiquadFilter();
+            noiseFilter.type = 'bandpass';
+            noiseFilter.frequency.value = profile === 'plaid' ? 950 : 280;
+            noiseFilter.Q.value = profile === 'plaid' ? 1.8 : 1.1;
+
+            noiseGain = audioCtx.createGain();
+            noiseGain.gain.value = 0.01;
+
+            noiseNode.connect(noiseFilter);
+            noiseFilter.connect(noiseGain);
+            noiseGain.connect(engineBusGain);
+            noiseNode.start();
+
+            if (profile === 'zimmer') {
+                const reverb = createSpaceReverb(audioCtx);
+                const wetGain = audioCtx.createGain();
+                wetGain.gain.value = 0.28;
+                reverb.connect(wetGain);
+                wetGain.connect(engineBusGain);
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.value = 340;
+                filter.Q.value = 1.4;
+                filter.connect(engineBusGain);
+                filter.connect(reverb);
+
+                const ratios = [0.5, 1.0, 1.004, 1.498, 2.0, 2.249];
+                const gains = [0.34, 0.22, 0.22, 0.16, 0.12, 0.09];
+                ratios.forEach((r, idx) => {
+                    const osc = audioCtx.createOscillator();
+                    const g = audioCtx.createGain();
+                    osc.type = idx === 0 ? 'sine' : (idx % 2 === 0 ? 'triangle' : 'sawtooth');
+                    osc.frequency.value = 55 * r;
+                    g.gain.value = gains[idx];
+                    osc.connect(g);
+                    g.connect(filter);
+                    osc.start();
+                    activeVoices.push({ osc, gain: g, filter, ratio: r, stop: () => osc.stop(), disconnect: () => osc.disconnect() });
+                });
+            } else if (profile === 'plaid') {
+                const shaper = audioCtx.createWaveShaper();
+                shaper.curve = createTubeSaturationCurve(1.4);
+
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.value = 420;
+                filter.Q.value = 1.6;
+
+                shaper.connect(filter);
+                filter.connect(engineBusGain);
+
+                const ratios = [0.5, 1.0, 1.995, 3.01, 4.5];
+                const gains = [0.32, 0.24, 0.18, 0.14, 0.08];
+                ratios.forEach((r, idx) => {
+                    const osc = audioCtx.createOscillator();
+                    const g = audioCtx.createGain();
+                    osc.type = idx < 2 ? 'sine' : 'triangle';
+                    osc.frequency.value = 65 * r;
+                    g.gain.value = gains[idx];
+                    osc.connect(g);
+                    g.connect(shaper);
+                    osc.start();
+                    activeVoices.push({ osc, gain: g, filter, ratio: r, stop: () => osc.stop(), disconnect: () => osc.disconnect() });
+                });
+            } else if (profile === 'v8') {
+                const wave = createCombustionWave(audioCtx, [1.0, 0.85, 0.42, 0.68, 0.28, 0.35, 0.14, 0.12]);
+                const shaper = audioCtx.createWaveShaper();
+                shaper.curve = createTubeSaturationCurve(2.6);
+
+                const mufflerPeak = audioCtx.createBiquadFilter();
+                mufflerPeak.type = 'peaking';
+                mufflerPeak.frequency.value = 115;
+                mufflerPeak.gain.value = 7.5;
+                mufflerPeak.Q.value = 1.8;
+
+                const lowpass = audioCtx.createBiquadFilter();
+                lowpass.type = 'lowpass';
+                lowpass.frequency.value = 320;
+
+                shaper.connect(mufflerPeak);
+                mufflerPeak.connect(lowpass);
+                lowpass.connect(engineBusGain);
+
+                const bankRatios = [0.5, 0.992, 1.008, 1.5, 2.0];
+                const bankGains = [0.36, 0.28, 0.28, 0.16, 0.14];
+                bankRatios.forEach((r, idx) => {
+                    const osc = audioCtx.createOscillator();
+                    const g = audioCtx.createGain();
+                    if (idx === 0) osc.type = 'sine';
+                    else osc.setPeriodicWave(wave);
+                    osc.frequency.value = 38 * r;
+                    g.gain.value = bankGains[idx];
+                    osc.connect(g);
+                    g.connect(shaper);
+                    osc.start();
+                    activeVoices.push({ osc, gain: g, filter: lowpass, ratio: r, stop: () => osc.stop(), disconnect: () => osc.disconnect() });
+                });
+            } else if (profile === 'gt6') {
+                const wave = createCombustionWave(audioCtx, [0.9, 0.72, 0.88, 0.54, 0.62, 0.45, 0.32, 0.24, 0.16]);
+                const shaper = audioCtx.createWaveShaper();
+                shaper.curve = createTubeSaturationCurve(2.1);
+
+                const exhaustRes = audioCtx.createBiquadFilter();
+                exhaustRes.type = 'peaking';
+                exhaustRes.frequency.value = 260;
+                exhaustRes.gain.value = 6.0;
+                exhaustRes.Q.value = 2.2;
+
+                const lowpass = audioCtx.createBiquadFilter();
+                lowpass.type = 'lowpass';
+                lowpass.frequency.value = 540;
+
+                shaper.connect(exhaustRes);
+                exhaustRes.connect(lowpass);
+                lowpass.connect(engineBusGain);
+
+                const ratios = [0.5, 1.0, 1.5, 2.005, 3.0];
+                const gains = [0.28, 0.26, 0.22, 0.20, 0.14];
+                ratios.forEach((r, idx) => {
+                    const osc = audioCtx.createOscillator();
+                    const g = audioCtx.createGain();
+                    if (idx === 0) osc.type = 'sine';
+                    else osc.setPeriodicWave(wave);
+                    osc.frequency.value = 52 * r;
+                    g.gain.value = gains[idx];
+                    osc.connect(g);
+                    g.connect(shaper);
+                    osc.start();
+                    activeVoices.push({ osc, gain: g, filter: lowpass, ratio: r, stop: () => osc.stop(), disconnect: () => osc.disconnect() });
+                });
+            }
+        }
+
+        function triggerExhaustCrackle() {
+            if (!audioCtx || (soundProfile !== 'v8' && soundProfile !== 'gt6')) return;
+            const now = audioCtx.currentTime;
+            for (let p = 0; p < 3; p++) {
+                const t = now + p * (0.07 + Math.random() * 0.05);
+                const osc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(140 + Math.random() * 70, t);
+                osc.frequency.exponentialRampToValueAtTime(38, t + 0.08);
+                g.gain.setValueAtTime(0.22, t);
+                g.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+                osc.connect(g);
+                g.connect(engineBusGain);
+                osc.start(t);
+                osc.stop(t + 0.1);
+            }
+        }
+
+        function updateEngineSound(speed, pedal) {
+            if (soundProfile === 'off' || !audioCtx || activeVoices.length === 0) return;
+            const now = audioCtx.currentTime;
+            const load = Math.min(1, pedal / 100);
+            const spdNorm = Math.min(1, speed / 210);
+
+            if (lastPreviewPedal > 65 && pedal < 12 && speed > 25) {
+                triggerExhaustCrackle();
+            }
+            lastPreviewPedal = pedal;
+
+            if (soundProfile === 'zimmer') {
+                const baseFreq = 52 + spdNorm * 95 + load * 34;
+                activeVoices.forEach(v => {
+                    v.osc.frequency.setTargetAtTime(baseFreq * v.ratio, now, 0.08);
+                    v.filter.frequency.setTargetAtTime(280 + load * 1500 + spdNorm * 800, now, 0.08);
+                });
+                if (noiseGain && noiseFilter) {
+                    noiseFilter.frequency.setTargetAtTime(350 + spdNorm * 1400, now, 0.1);
+                    noiseGain.gain.setTargetAtTime(0.02 + load * 0.10 + spdNorm * 0.08, now, 0.1);
+                }
+            } else if (soundProfile === 'plaid') {
+                const baseFreq = 62 + spdNorm * 185 + load * 65;
+                activeVoices.forEach(v => {
+                    v.osc.frequency.setTargetAtTime(baseFreq * v.ratio, now, 0.05);
+                    v.filter.frequency.setTargetAtTime(360 + load * 2200 + spdNorm * 1400, now, 0.05);
+                });
+                if (noiseGain && noiseFilter) {
+                    noiseFilter.frequency.setTargetAtTime(750 + spdNorm * 2400, now, 0.06);
+                    noiseGain.gain.setTargetAtTime(0.03 + load * 0.18 + spdNorm * 0.12, now, 0.06);
+                }
+            } else if (soundProfile === 'v8' || soundProfile === 'gt6') {
+                const targetGear = speed < 42 ? 1 : (speed < 82 ? 2 : (speed < 128 ? 3 : (speed < 175 ? 4 : 5)));
+                if (targetGear !== virtualGearRatio && now - lastShiftTime > 0.6) {
+                    virtualGearRatio = targetGear;
+                    lastShiftTime = now;
+                }
+                const gearDiv = [1, 1.0, 1.58, 2.25, 2.95, 3.65][virtualGearRatio];
+                const idleBase = soundProfile === 'v8' ? 35 : 46;
+                const rpmFreq = idleBase + ((speed / gearDiv) * 1.45) + load * 24;
+
+                activeVoices.forEach(v => {
+                    v.osc.frequency.setTargetAtTime(rpmFreq * v.ratio, now, 0.05);
+                    v.filter.frequency.setTargetAtTime((soundProfile === 'v8' ? 240 : 380) + load * 1150 + spdNorm * 450, now, 0.05);
+                });
+                if (noiseGain && noiseFilter) {
+                    noiseFilter.frequency.setTargetAtTime(220 + load * 900, now, 0.07);
+                    noiseGain.gain.setTargetAtTime(0.02 + load * 0.16, now, 0.07);
+                }
+            }
+        }
+
+        function previewAccelSound(active) {
+            if (soundProfile === 'off') {
+                if (active) setSoundProfile('zimmer');
+                else return;
+            }
+            ensureAudioCtx();
+            isPreviewingSound = active;
+            if (active) {
+                let step = 0;
+                const revInterval = setInterval(() => {
+                    if (!isPreviewingSound) {
+                        clearInterval(revInterval);
+                        updateEngineSound(0, 0);
+                        return;
+                    }
+                    step = Math.min(100, step + 7);
+                    updateEngineSound(step * 1.6, step);
+                }, 45);
+            } else {
+                triggerExhaustCrackle();
+                updateEngineSound(0, 0);
+            }
+        }
+
+        function playWarningChime() {
+            if (!warningChimeEnabled) return;
+            ensureAudioCtx();
+            const now = audioCtx.currentTime;
+            [587.33, 880].forEach((freq, idx) => {
+                const osc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, now + idx * 0.14);
+                g.gain.setValueAtTime(0.18, now + idx * 0.14);
+                g.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.14 + 0.25);
+                osc.connect(g);
+                g.connect(masterGain);
+                osc.start(now + idx * 0.14);
+                osc.stop(now + idx * 0.14 + 0.26);
+            });
+        }
+
+        function toggleWarningChime() {
+            warningChimeEnabled = !warningChimeEnabled;
+            const btn = document.getElementById('btn-chime');
+            btn.textContent = `경고음: ${warningChimeEnabled ? 'ON' : 'OFF'}`;
+            btn.className = warningChimeEnabled
+                ? 'py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#22C55E] whitespace-nowrap btn-press'
+                : 'py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#7C828D] whitespace-nowrap btn-press';
+            if (warningChimeEnabled) playWarningChime();
+        }
+
+        /**
+         * ============================================================================
+         * 2. 플래드(Plaid) 가속 워프 비주얼 캔버스 엔진
+         * ============================================================================
+         */
+        const plaidCanvas = document.getElementById('plaid-canvas');
+        const pCtx = plaidCanvas ? plaidCanvas.getContext('2d') : null;
+        let currentTheme = 'minimal';
+        let warpStars = [];
+        let liveWarpSpeed = 0;
+        let liveWarpPedal = 0;
+
+        function initPlaidCanvas() {
+            if (!plaidCanvas) return;
+            plaidCanvas.width = window.innerWidth;
+            plaidCanvas.height = window.innerHeight;
+            warpStars = Array.from({ length: 75 }, () => ({
+                x: (Math.random() - 0.5) * plaidCanvas.width * 1.6,
+                y: (Math.random() - 0.5) * plaidCanvas.height * 1.6,
+                z: Math.random() * plaidCanvas.width,
+                color: Math.random() > 0.62 ? '#FF2A54' : (Math.random() > 0.45 ? '#A855F7' : '#38BDF8')
+            }));
+        }
+
+        function renderPlaidLoop() {
+            if (pCtx && currentTheme === 'plaid') {
+                const w = plaidCanvas.width;
+                const h = plaidCanvas.height;
+                const cx = w / 2;
+                const cy = h / 2;
+
+                pCtx.fillStyle = 'rgba(18, 19, 22, 0.34)';
+                pCtx.fillRect(0, 0, w, h);
+
+                const intensity = Math.max(0.06, (liveWarpPedal / 100) * 0.9 + (liveWarpSpeed / 220) * 0.6);
+                const velocity = 2.5 + intensity * 34;
+
+                if (liveWarpPedal > 15 || liveWarpSpeed > 25) {
+                    const grad = pCtx.createRadialGradient(cx, cy, 18, cx, cy, Math.max(w, h) * 0.48);
+                    grad.addColorStop(0, `rgba(255, 42, 84, ${0.14 * intensity})`);
+                    grad.addColorStop(0.5, `rgba(139, 92, 246, ${0.07 * intensity})`);
+                    grad.addColorStop(1, 'rgba(18, 19, 22, 0)');
+                    pCtx.fillStyle = grad;
+                    pCtx.fillRect(0, 0, w, h);
+                }
+
+                for (let i = 0; i < warpStars.length; i++) {
+                    const s = warpStars[i];
+                    const prevZ = s.z;
+                    s.z -= velocity;
+
+                    if (s.z <= 2) {
+                        s.x = (Math.random() - 0.5) * w * 1.6;
+                        s.y = (Math.random() - 0.5) * h * 1.6;
+                        s.z = w;
+                        continue;
+                    }
+
+                    const sx = cx + (s.x / s.z) * (w * 0.42);
+                    const sy = cy + (s.y / s.z) * (h * 0.42);
+                    const px = cx + (s.x / prevZ) * (w * 0.42);
+                    const py = cy + (s.y / prevZ) * (h * 0.42);
+
+                    if (sx < 0 || sx > w || sy < 0 || sy > h) continue;
+
+                    pCtx.beginPath();
+                    pCtx.strokeStyle = s.color;
+                    pCtx.globalAlpha = Math.min(0.88, (1 - s.z / w) * (0.3 + intensity));
+                    pCtx.lineWidth = Math.max(1, (1 - s.z / w) * 2.8);
+                    pCtx.moveTo(px, py);
+                    pCtx.lineTo(sx, sy);
+                    pCtx.stroke();
+                }
+                pCtx.globalAlpha = 1;
+            }
+            requestAnimationFrame(renderPlaidLoop);
+        }
+
+        window.addEventListener('resize', initPlaidCanvas);
+        initPlaidCanvas();
+        renderPlaidLoop();
+
+        /**
+         * ============================================================================
+         * 3. TSL BLE 통신 프로토콜 엔진 (확정 명세 준수)
+         * ============================================================================
+         */
+        const BLE_SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb';
+        const BLE_CHAR_UUID    = '0000fff1-0000-1000-8000-00805f9b34fb';
+
+        let blePassword = localStorage.getItem('tsl_ble_key') || '1234';
+        document.getElementById('pw-input').value = blePassword;
+
+        class TslClusterBle {
+            constructor() {
+                this.device = null;
+                this.char = null;
+                this.isConnected = false;
+                this.mtu = 120;
+                this.rxState = 0;
+                this.rxType = 0;
+                this.rxLen = 0;
+                this.rxIndex = 0;
+                this.rxBuf = new Uint8Array(0);
+                this.rxVerify = 0;
+                this.rxLastTime = 0;
+                this.txQueue = Promise.resolve();
+                this.pollTimer = null;
+            }
+
+            async connect() {
+                if (!navigator.bluetooth) {
+                    showToast('이 브라우저는 Web Bluetooth를 지원하지 않습니다. Chrome을 이용해 주세요.');
+                    return;
+                }
+                try {
+                    updateBleUi('connecting');
+                    this.device = await navigator.bluetooth.requestDevice({
+                        filters: [{ services: [BLE_SERVICE_UUID] }],
+                        optionalServices: [BLE_SERVICE_UUID]
+                    });
+                    this.device.addEventListener('gattserverdisconnected', () => this.onDisconnected());
+                    const server = await this.device.gatt.connect();
+                    const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+                    this.char = await service.getCharacteristic(BLE_CHAR_UUID);
+
+                    await this.char.startNotifications();
+                    this.char.addEventListener('characteristicvaluechanged', (e) => {
+                        this.onNotify(new Uint8Array(e.target.value.buffer));
+                    });
+
+                    this.isConnected = true;
+                    this.mtu = 120;
+                    if (isDemoRunning) toggleDemoMode();
+                    updateBleUi('connected', this.device.name || 'TSL');
+                    showToast('TSL CAN 모듈 연결 완료');
+
+                    setTimeout(() => {
+                        this.sendPassword(blePassword);
+                        setTimeout(() => this.send(160, []), 150);
+                        setTimeout(() => this.startPolling(), 320);
+                    }, 180);
+                } catch (err) {
+                    updateBleUi('disconnected');
+                    if (err.name !== 'NotFoundError') {
+                        showToast('연결 오류: ' + err.message);
+                    }
+                }
+            }
+
+            disconnect() {
+                this.stopPolling();
+                if (this.device && this.device.gatt.connected) {
+                    this.device.gatt.disconnect();
+                }
+                this.onDisconnected();
+            }
+
+            onDisconnected() {
+                this.stopPolling();
+                this.isConnected = false;
+                this.char = null;
+                updateBleUi('disconnected');
+                showToast('블루투스 연결이 종료되었습니다.');
+            }
+
+            sendPassword(pw) {
+                if (!pw || pw.length !== 4) return;
+                const payload = [pw.charCodeAt(0), pw.charCodeAt(1), pw.charCodeAt(2), pw.charCodeAt(3)];
+                this.send(168, payload);
+            }
+
+            startPolling() {
+                this.stopPolling();
+                this.send(176, [1]);
+                this.pollTimer = setInterval(() => {
+                    if (this.isConnected) this.send(176, [1]);
+                }, 1000);
+            }
+
+            stopPolling() {
+                if (this.pollTimer) {
+                    clearInterval(this.pollTimer);
+                    this.pollTimer = null;
+                    if (this.isConnected) this.send(176, [0]);
+                }
+            }
+
+            async writeChunk(chunk) {
+                try {
+                    if (this.char.properties.writeWithoutResponse) {
+                        await this.char.writeValueWithoutResponse(chunk);
+                    } else {
+                        await this.char.writeValue(chunk);
+                    }
+                } catch (err) {
+                    if (chunk.length > 20) {
+                        this.mtu = 20;
+                        for (let sub = 0; sub < chunk.length; sub += 20) {
+                            const subChunk = chunk.slice(sub, sub + 20);
+                            if (this.char.properties.writeWithoutResponse) {
+                                await this.char.writeValueWithoutResponse(subChunk);
+                            } else {
+                                await this.char.writeValue(subChunk);
+                            }
+                        }
+                    } else {
+                        throw err;
+                    }
+                }
+            }
+
+            send(type, payload = []) {
+                if (!this.isConnected || !this.char) return;
+                const data = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+                const len = data.length;
+                const pkt = new Uint8Array(6 + len);
+                pkt[0] = 0x55;
+                pkt[1] = 0x7F;
+                pkt[2] = type & 0xFF;
+                pkt[3] = (len >>> 8) & 0xFF;
+                pkt[4] = len & 0xFF;
+                for (let i = 0; i < len; i++) pkt[5 + i] = data[i];
+
+                let sum = 0;
+                for (let i = 2; i < 5 + len; i++) sum += pkt[i];
+                pkt[5 + len] = sum & 0xFF;
+
+                this.txQueue = this.txQueue.then(async () => {
+                    for (let offset = 0; offset < pkt.length; offset += this.mtu) {
+                        await this.writeChunk(pkt.slice(offset, offset + this.mtu));
+                    }
+                }).catch(() => {});
+            }
+
+            onNotify(bytes) {
+                const now = Date.now();
+                if (now - this.rxLastTime >= 500) this.rxState = 0;
+                this.rxLastTime = now;
+
+                for (let i = 0; i < bytes.length; i++) {
+                    const b = bytes[i];
+                    if (this.rxState === 0 && b === 0x55) {
+                        this.rxState = 1;
+                    } else if (this.rxState === 1 && b === 0x7F) {
+                        this.rxState = 2;
+                        this.rxVerify = 0;
+                    } else if (this.rxState === 2) {
+                        this.rxType = b;
+                        this.rxVerify = (this.rxVerify + b) & 0xFF;
+                        this.rxState = 3;
+                    } else if (this.rxState === 3) {
+                        this.rxLen = b << 8;
+                        this.rxVerify = (this.rxVerify + b) & 0xFF;
+                        this.rxState = 4;
+                    } else if (this.rxState === 4) {
+                        this.rxLen |= b;
+                        this.rxVerify = (this.rxVerify + b) & 0xFF;
+                        this.rxIndex = 0;
+                        if (this.rxLen === 0) {
+                            this.rxBuf = new Uint8Array(0);
+                            this.rxState = 6;
+                        } else if (this.rxLen <= 4096) {
+                            this.rxBuf = new Uint8Array(this.rxLen);
+                            this.rxState = 5;
+                        } else {
+                            this.rxState = 0;
+                        }
+                    } else if (this.rxState === 5) {
+                        this.rxBuf[this.rxIndex++] = b;
+                        this.rxVerify = (this.rxVerify + b) & 0xFF;
+                        if (this.rxIndex >= this.rxLen) this.rxState = 6;
+                    } else if (this.rxState === 6) {
+                        if (this.rxVerify === b) {
+                            this.handlePacket(this.rxType, this.rxBuf);
+                        }
+                        this.rxState = 0;
+                    } else {
+                        this.rxState = 0;
+                    }
+                }
+            }
+
+            handlePacket(type, buf) {
+                if (type === 160 || type === 161 || type === 163) {
+                    if (buf.length >= 1) {
+                        const hw = buf[0] || 6;
+                        document.getElementById('hw-badge').textContent = `HW-${hw}`;
+                    }
+                } else if (type === 168) {
+                    if (buf[0] === 1) {
+                        showToast('비밀번호 인증 완료');
+                    } else if (buf[0] === 0) {
+                        showToast('비밀번호 오류: 우측 상단 열쇠 아이콘에서 수정하세요.');
+                    }
+                } else if (type === 176) {
+                    parseTelemetry176(buf);
+                } else if (type === 208) {
+                    parseHvPack208(buf);
+                }
+            }
+        }
+
+        const tslBle = new TslClusterBle();
+
+        function toggleBleConnection() {
+            if (tslBle.isConnected) tslBle.disconnect();
+            else tslBle.connect();
+        }
+
+        function requestHvPack208() {
+            if (tslBle.isConnected) {
+                tslBle.send(208, [1]);
+                showToast('고전압 배터리 팩 데이터 요청됨');
+            } else {
+                showToast('BLE 연결 또는 데모 모드에서 확인 가능합니다.');
+            }
+        }
+
+        function updateBleUi(state, name = '') {
+            const dot = document.getElementById('ble-dot');
+            const label = document.getElementById('ble-label');
+            if (state === 'connected') {
+                dot.className = 'w-2 h-2 rounded-full bg-[#22C55E] shrink-0';
+                label.textContent = name || '연결됨';
+            } else if (state === 'connecting') {
+                dot.className = 'w-2 h-2 rounded-full bg-[#D97706] animate-ping shrink-0';
+                label.textContent = '연결 중';
+            } else {
+                dot.className = 'w-2 h-2 rounded-full bg-rose-500 shrink-0';
+                label.textContent = 'BLE 연결';
+            }
+        }
+
+        /**
+         * ============================================================================
+         * 4. 실시간 데이터 파싱 & UI 렌더링
+         * ============================================================================
+         */
+        let isHudMirrored = false;
+        let tripStartOdo = null;
+        let maxTripSpeed = 0;
+        let maxTripKw = 0;
+        let zeroToHundredMode = 0;
+        let zeroToHundredStartTime = 0;
+        let lastHandsOnState = 0;
+        let prevSampleSpeed = 0;
+        let prevSampleTime = Date.now();
+        let currentApState = 0;
+
+        /**
+         * ============================================================================
+         * 4-1. 과속 단속 카메라 GPS 전방 감지 & FSD 속도 프로필 자동 전환 엔진
+         * ============================================================================
+         */
+        let camAutoChillEnabled = localStorage.getItem('tsl_cam_auto') !== '0';
+        let preferredFsdProfile = localStorage.getItem('tsl_fsd_pref') || 'standard'; // 'standard' | 'hurry'
+        let camDetectRadius = Number(localStorage.getItem('tsl_cam_radius')) || 500;
+        let cameraDatabase = JSON.parse(localStorage.getItem('tsl_cam_db') || '[]');
+        let currentGpsPos = null;
+        let gpsWatchId = null;
+        let activeFsdCamState = 'normal'; // 'normal' | 'chill'
+        let trackedCameraId = null;
+        let lastCameraDist = Infinity;
+
+        // TSL CAN 모듈(Type 167) FSD 속도 프로필 제어 코드 매핑
+        const FSD_PROFILE_CMD = {
+            chill: 52,
+            standard: 53,
+            hurry: 54
+        };
+
+        function initCameraAlertSystem() {
+            if (cameraDatabase.length === 0) {
+                cameraDatabase = [
+                    { id: 'kr-sample-1', lat: 37.5145, lng: 127.0595, limit: 50, name: '테헤란로 삼성역 구간' },
+                    { id: 'kr-sample-2', lat: 37.4979, lng: 127.0276, limit: 50, name: '강남대로 강남역 구간' },
+                    { id: 'kr-sample-3', lat: 37.3947, lng: 127.1112, limit: 60, name: '판교역 분당내곡로' }
+                ];
+            }
+            updateCameraSettingsUi();
+            startGpsTracking();
+        }
+
+        function startGpsTracking() {
+            if (!('geolocation' in navigator)) {
+                document.getElementById('gps-fix-badge').textContent = 'GPS 미지원';
+                return;
+            }
+            if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
+            gpsWatchId = navigator.geolocation.watchPosition(
+                (pos) => {
+                    currentGpsPos = {
+                        lat: pos.coords.latitude,
+                        lng: pos.coords.longitude,
+                        heading: pos.coords.heading,
+                        speed: pos.coords.speed
+                    };
+                    const badge = document.getElementById('gps-fix-badge');
+                    if (badge) {
+                        badge.textContent = 'GPS 수신중';
+                        badge.className = 'px-1.5 py-0.5 rounded bg-[#121316] border border-[#22C55E]/50 font-mono text-[9px] text-[#22C55E]';
+                    }
+                    evaluateSpeedCameras(currentGpsPos.lat, currentGpsPos.lng, currentGpsPos.heading);
+                },
+                () => {
+                    const badge = document.getElementById('gps-fix-badge');
+                    if (badge) {
+                        badge.textContent = 'GPS 권한필요';
+                        badge.className = 'px-1.5 py-0.5 rounded bg-[#121316] border border-amber-500/50 font-mono text-[9px] text-amber-400';
+                    }
+                },
+                { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+            );
+        }
+
+        function haversineMeters(lat1, lon1, lat2, lon2) {
+            const R = 6371000;
+            const toRad = (deg) => (deg * Math.PI) / 180;
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) ** 2 +
+                      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function calcBearingDeg(lat1, lon1, lat2, lon2) {
+            const toRad = (deg) => (deg * Math.PI) / 180;
+            const toDeg = (rad) => (rad * 180) / Math.PI;
+            const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+            const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+                      Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
+            return (toDeg(Math.atan2(y, x)) + 360) % 360;
+        }
+
+        function angleDiffDeg(a, b) {
+            const diff = Math.abs(a - b) % 360;
+            return diff > 180 ? 360 - diff : diff;
+        }
+
+        function sendFsdSpeedProfileCmd(profileKey) {
+            const cmdCode = FSD_PROFILE_CMD[profileKey] || 53;
+            if (tslBle.isConnected) {
+                tslBle.send(167, [cmdCode]);
+            }
+        }
+
+        function evaluateSpeedCameras(lat, lng, heading) {
+            if (!camAutoChillEnabled || cameraDatabase.length === 0) {
+                hideCameraBanner();
+                return;
+            }
+
+            let nearestCam = null;
+            let nearestDist = Infinity;
+
+            for (let i = 0; i < cameraDatabase.length; i++) {
+                const cam = cameraDatabase[i];
+                const dist = haversineMeters(lat, lng, cam.lat, cam.lng);
+                if (dist > camDetectRadius + 150) continue;
+
+                // 진행 방향(heading)이 유효할 때 전방 ±50도 이내 카메라만 선별
+                if (typeof heading === 'number' && !isNaN(heading) && dist > 25) {
+                    const bearing = calcBearingDeg(lat, lng, cam.lat, cam.lng);
+                    if (angleDiffDeg(heading, bearing) > 50) continue;
+                }
+
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    nearestCam = cam;
+                }
+            }
+
+            const isApActive = (currentApState === 1 || currentApState === 2);
+
+            if (nearestCam && nearestDist <= camDetectRadius) {
+                const isPassingAway = (trackedCameraId === nearestCam.id && nearestDist > lastCameraDist + 12 && lastCameraDist < 60);
+                if (isPassingAway) {
+                    restorePreferredFsdProfile(isApActive);
+                    return;
+                }
+
+                trackedCameraId = nearestCam.id;
+                lastCameraDist = nearestDist;
+                showCameraBanner(nearestCam.limit || 80, Math.round(nearestDist), isApActive);
+
+                if (isApActive && activeFsdCamState !== 'chill') {
+                    activeFsdCamState = 'chill';
+                    sendFsdSpeedProfileCmd('chill');
+                    playWarningChime();
+                    showToast(`단속 카메라 감지(${Math.round(nearestDist)}m) → FSD Chill 전환`);
+                }
+            } else if (activeFsdCamState === 'chill' || trackedCameraId !== null) {
+                restorePreferredFsdProfile(isApActive);
+            }
+        }
+
+        function restorePreferredFsdProfile(isApActive) {
+            hideCameraBanner();
+            trackedCameraId = null;
+            lastCameraDist = Infinity;
+            if (activeFsdCamState === 'chill') {
+                activeFsdCamState = 'normal';
+                if (isApActive) {
+                    sendFsdSpeedProfileCmd(preferredFsdProfile);
+                    const label = preferredFsdProfile === 'hurry' ? 'Hurry' : 'Standard';
+                    showToast(`카메라 통과 완료 → FSD ${label} 복귀`);
+                }
+            }
+        }
+
+        function showCameraBanner(limit, distM, isApActive) {
+            const banner = document.getElementById('cam-alert-banner');
+            document.getElementById('cam-alert-limit').textContent = limit;
+            document.getElementById('cam-alert-dist').textContent = `${distM}m`;
+            document.getElementById('cam-alert-fsd').textContent = isApActive
+                ? 'FSD 프로필 → Chill 자동 전환됨'
+                : 'FSD 대기 중 (활성 시 Chill 자동 적용)';
+            banner.classList.remove('hidden');
+        }
+
+        function hideCameraBanner() {
+            document.getElementById('cam-alert-banner')?.classList.add('hidden');
+        }
+
+        function toggleCamAutoChill() {
+            camAutoChillEnabled = !camAutoChillEnabled;
+            localStorage.setItem('tsl_cam_auto', camAutoChillEnabled ? '1' : '0');
+            if (!camAutoChillEnabled) {
+                restorePreferredFsdProfile(currentApState === 1 || currentApState === 2);
+            }
+            updateCameraSettingsUi();
+            showToast(`카메라 FSD 자동 컴포트: ${camAutoChillEnabled ? 'ON' : 'OFF'}`);
+        }
+
+        function setPreferredFsdProfile(pref) {
+            preferredFsdProfile = pref;
+            localStorage.setItem('tsl_fsd_pref', pref);
+            updateCameraSettingsUi();
+            showToast(`통과 후 복귀 FSD 프로필: ${pref === 'hurry' ? 'Hurry' : 'Standard'}`);
+        }
+
+        function setCamDetectRadius(meters) {
+            camDetectRadius = meters;
+            localStorage.setItem('tsl_cam_radius', String(meters));
+            updateCameraSettingsUi();
+            showToast(`전방 카메라 감지 거리: ${meters}m`);
+        }
+
+        function updateCameraSettingsUi() {
+            const enBtn = document.getElementById('btn-cam-enable');
+            const dockDot = document.getElementById('cam-dock-dot');
+            if (enBtn) {
+                enBtn.textContent = camAutoChillEnabled ? '기능 ON' : '기능 OFF';
+                enBtn.className = camAutoChillEnabled
+                    ? 'px-2.5 py-1 rounded-md bg-[#22C55E] text-[#121316] text-[11px] font-bold btn-press'
+                    : 'px-2.5 py-1 rounded-md bg-[#121316] border border-[#2B2E35] text-[#9CA3AF] text-[11px] font-bold btn-press';
+            }
+            if (dockDot) {
+                dockDot.className = camAutoChillEnabled
+                    ? 'w-1.5 h-1.5 rounded-full bg-[#22C55E] shrink-0'
+                    : 'w-1.5 h-1.5 rounded-full bg-[#7C828D] shrink-0';
+            }
+
+            ['standard', 'hurry'].forEach(p => {
+                const btn = document.getElementById(`fsd-pref-${p}`);
+                if (!btn) return;
+                btn.className = (p === preferredFsdProfile)
+                    ? 'py-1.5 rounded-md bg-[#F2F3F5] text-[#121316] btn-press'
+                    : 'py-1.5 rounded-md bg-[#1A1C20] border border-[#2B2E35] text-[#D1D5DB] btn-press';
+            });
+
+            [300, 500].forEach(r => {
+                const btn = document.getElementById(`cam-dist-${r}`);
+                if (!btn) return;
+                btn.className = (r === camDetectRadius)
+                    ? 'py-1.5 rounded-md bg-[#F2F3F5] text-[#121316] btn-press'
+                    : 'py-1.5 rounded-md bg-[#1A1C20] border border-[#2B2E35] text-[#D1D5DB] btn-press';
+            });
+
+            const countEl = document.getElementById('cam-db-count');
+            if (countEl) countEl.textContent = `${cameraDatabase.length.toLocaleString()} 개`;
+        }
+
+        function addTestCameraAtCurrentPos() {
+            const baseLat = currentGpsPos ? currentGpsPos.lat : 37.5665;
+            const baseLng = currentGpsPos ? currentGpsPos.lng : 126.9780;
+            const headingRad = ((currentGpsPos && !isNaN(currentGpsPos.heading) ? currentGpsPos.heading : 0) * Math.PI) / 180;
+            // 현재 위치에서 진행 방향 전방 약 250m 지점에 테스트 카메라 생성
+            const dLat = (250 * Math.cos(headingRad)) / 111320;
+            const dLng = (250 * Math.sin(headingRad)) / (111320 * Math.cos((baseLat * Math.PI) / 180));
+
+            const newCam = {
+                id: `test-${Date.now()}`,
+                lat: Number((baseLat + dLat).toFixed(6)),
+                lng: Number((baseLng + dLng).toFixed(6)),
+                limit: 80,
+                name: '사용자 테스트 카메라'
+            };
+            cameraDatabase.push(newCam);
+            localStorage.setItem('tsl_cam_db', JSON.stringify(cameraDatabase));
+            updateCameraSettingsUi();
+            evaluateSpeedCameras(baseLat, baseLng, currentGpsPos ? currentGpsPos.heading : 0);
+            showToast('전방 250m 지점에 테스트 단속 카메라가 추가되었습니다.');
+        }
+
+        function clearCameraDb() {
+            cameraDatabase = [];
+            localStorage.setItem('tsl_cam_db', '[]');
+            restorePreferredFsdProfile(currentApState === 1 || currentApState === 2);
+            updateCameraSettingsUi();
+            showToast('카메라 좌표 DB가 초기화되었습니다.');
+        }
+
+        function importCameraFile(event) {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const text = String(e.target.result || '').trim();
+                    const imported = [];
+                    if (text.startsWith('[') || text.startsWith('{')) {
+                        const parsed = JSON.parse(text);
+                        const list = Array.isArray(parsed) ? parsed : (parsed.cameras || parsed.records || []);
+                        list.forEach((item, idx) => {
+                            const lat = Number(item.lat ?? item.latitude ?? item['위도']);
+                            const lng = Number(item.lng ?? item.lon ?? item.longitude ?? item['경도']);
+                            const limit = Number(item.limit ?? item.speedLimit ?? item['제한속도'] ?? 80);
+                            if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+                                imported.push({ id: `imp-${idx}`, lat, lng, limit: limit || 80 });
+                            }
+                        });
+                    } else {
+                        const lines = text.split(/\r?\n/);
+                        lines.forEach((line, idx) => {
+                            const cols = line.split(',').map(s => s.trim().replace(/^"|"$/g, ''));
+                            if (cols.length >= 2) {
+                                const lat = Number(cols[0]);
+                                const lng = Number(cols[1]);
+                                const limit = Number(cols[2]) || 80;
+                                if (!isNaN(lat) && !isNaN(lng) && lat > 30 && lat < 45) {
+                                    imported.push({ id: `csv-${idx}`, lat, lng, limit });
+                                }
+                            }
+                        });
+                    }
+
+                    if (imported.length === 0) {
+                        showToast('유효한 위도/경도 좌표를 찾지 못했습니다.');
+                        return;
+                    }
+                    cameraDatabase = cameraDatabase.concat(imported);
+                    localStorage.setItem('tsl_cam_db', JSON.stringify(cameraDatabase));
+                    updateCameraSettingsUi();
+                    showToast(`단속 카메라 ${imported.length.toLocaleString()}개 불러오기 완료`);
+                } catch (err) {
+                    showToast('파일 파싱 오류: JSON 또는 CSV 형식을 확인하세요.');
+                } finally {
+                    event.target.value = '';
+                }
+            };
+            reader.readAsText(file, 'UTF-8');
+        }
+
+        function parseTelemetry176(a) {
+            if (a.length < 16) return;
+
+            let e = ((a[3] << 24) | (a[2] << 16) | (a[1] << 8) | a[0]) >>> 0;
+            const speed = e & 511;
+            const gear = (e >>> 9) & 7;
+            const turn = (e >>> 12) & 3;
+            const ap = (e >>> 14) & 3;
+            const soc = (e >>> 24) & 127;
+
+            e = ((a[7] << 24) | (a[6] << 16) | (a[5] << 8) | a[4]) >>> 0;
+            const odo = ((e >>> 6) & 67108863) / 10;
+
+            const tpms = [];
+            for (let t = 0; t < 4; t++) {
+                const rawP = a[8 + t];
+                tpms.push((rawP === 0 || rawP === 255) ? null : (0.025 * rawP * 14.5038).toFixed(1));
+            }
+
+            e = ((a[15] << 24) | (a[14] << 16) | (a[13] << 8) | a[12]) >>> 0;
+            const pedal = Math.min(100, Math.round((100 * (e & 255)) / 250));
+            let rearKw = (e >>> 8) & 2047;
+            if (rearKw >= 1024) rearKw -= 2048;
+            rearKw = Math.round(rearKw / 2);
+            let frontKw = (e >>> 19) & 2047;
+            if (frontKw >= 1024) frontKw -= 2048;
+            frontKw = Math.round(frontKw / 2);
+
+            let alt = 0, speedUnit = 1, handsOn = 0;
+            let bTemps = [null, null, null, null];
+            let blowerRpm = 0, hvacWatts = 0, cabinTemp = '--', ambTemp = '--';
+            let rangeKm = 0, battTemp = '--', limitSpd = 0;
+
+            if (a.length >= 33) {
+                const altRaw = (((a[17] << 16) | (a[16] << 8) | a[15]) >>> 6) & 16383;
+                alt = altRaw >= 8192 ? altRaw - 16384 : altRaw;
+                speedUnit = (a[17] >> 6) & 1;
+                handsOn = (a[17] >> 7) & 1;
+
+                e = ((a[21] << 24) | (a[20] << 16) | (a[19] << 8) | a[18]) >>> 0;
+                bTemps = [
+                    (e & 1023) - 40,
+                    ((e >>> 10) & 1023) - 40,
+                    ((e >>> 20) & 1023) - 40,
+                    (((a[22] << 2) | (e >>> 30)) & 1023) - 40
+                ];
+
+                e = ((a[26] << 24) | (a[25] << 16) | (a[24] << 8) | a[23]) >>> 0;
+                blowerRpm = 5 * (e & 1023);
+                hvacWatts = 5 * ((e >>> 10) & 2047);
+                cabinTemp = (0.1 * ((e >>> 21) & 2047) - 40).toFixed(1);
+                ambTemp = (0.5 * a[27] - 40).toFixed(1);
+
+                e = ((a[31] << 24) | (a[30] << 16) | (a[29] << 8) | a[28]) >>> 0;
+                rangeKm = Math.round(1.61 * ((e >>> 12) & 1023));
+                battTemp = (0.5 * ((e >>> 22) & 511) - 40).toFixed(1);
+
+                limitSpd = (gear >= 2 && gear <= 4) ? 5 * ((((a[32] << 8) | a[31]) >>> 7) & 31) : 0;
+            }
+
+            renderClusterState({
+                speed, gear, turn, ap, soc, odo, tpms,
+                pedal, frontKw, rearKw, alt, speedUnit, handsOn,
+                bTemps, blowerRpm, hvacWatts, cabinTemp, ambTemp,
+                rangeKm, battTemp, limitSpd
+            });
+        }
+
+        function parseHvPack208(a) {
+            if (a.length < 16) return;
+            let i = ((a[3] << 24) | (a[2] << 16) | (a[1] << 8) | a[0]) >>> 0;
+            const vol = (0.01 * (i & 65535)).toFixed(1);
+            let cur = -0.1 * ((i >>> 16) & 65535);
+            if (cur < -3276.7) cur += 6553.6;
+
+            i = ((a[15] << 24) | (a[14] << 16) | (a[13] << 8) | a[12]) >>> 0;
+            const remKwh = (0.02 * (i & 65535)).toFixed(1);
+            const fullKwh = (0.02 * ((i >>> 16) & 65535)).toFixed(1);
+
+            document.getElementById('hv-vol').textContent = `${vol} V`;
+            document.getElementById('hv-cur').textContent = `${cur.toFixed(1)} A`;
+            document.getElementById('hv-rem').textContent = `${remKwh} kWh`;
+            document.getElementById('hv-full').textContent = `${fullKwh} kWh`;
+        }
+
+        function renderClusterState(d) {
+            const totalKw = d.frontKw + d.rearKw;
+            liveWarpSpeed = d.speed;
+            liveWarpPedal = d.pedal;
+
+            const nowMs = Date.now();
+            const dtSec = Math.max(0.05, (nowMs - prevSampleTime) / 1000);
+            const deltaMs = ((d.speed - prevSampleSpeed) / 3.6);
+            const longG = Math.max(-1.2, Math.min(1.2, deltaMs / (dtSec * 9.81)));
+            prevSampleSpeed = d.speed;
+            prevSampleTime = nowMs;
+
+            const speedEl = document.getElementById('val-speed');
+            speedEl.textContent = d.speed;
+            document.getElementById('val-unit').textContent = d.speedUnit ? 'KM/H' : 'MPH';
+            document.getElementById('val-pedal').textContent = d.pedal;
+            document.getElementById('val-total-kw').textContent = totalKw;
+            document.getElementById('val-front-kw').textContent = d.frontKw;
+            document.getElementById('val-rear-kw').textContent = d.rearKw;
+            document.getElementById('val-soc').textContent = d.soc;
+            document.getElementById('val-range').textContent = d.rangeKm;
+            document.getElementById('val-odo').textContent = d.odo.toFixed(1);
+            document.getElementById('val-cabin-temp').textContent = d.cabinTemp;
+            document.getElementById('val-amb-temp').textContent = d.ambTemp;
+            document.getElementById('val-batt-temp').textContent = `${d.battTemp} °C`;
+            document.getElementById('val-alt-hvac').textContent = `${d.alt}m / ${d.hvacWatts}W`;
+
+            // 제한속도 표지판 및 초과 경고
+            const limitEl = document.getElementById('val-limit');
+            const limitSign = document.getElementById('limit-sign');
+            if (d.limitSpd > 0) {
+                limitEl.textContent = d.limitSpd;
+                limitSign.classList.toggle('animate-pulse', d.speed > d.limitSpd);
+            } else {
+                limitEl.textContent = '--';
+                limitSign.classList.remove('animate-pulse');
+            }
+
+            // 기어 표시 (1:P, 2:R, 3:N, 4:D)
+            for (let g = 1; g <= 4; g++) {
+                const gEl = document.getElementById(`gear-${g}`);
+                if (gEl) {
+                    gEl.className = (g === d.gear) ? 'text-[#F2F3F5] scale-110 transition-transform' : 'text-[#4B505B]';
+                }
+            }
+
+            // 방향지시등 (bit0: 좌측, bit1: 우측)
+            document.getElementById('turn-left').classList.toggle('turn-active', !!(d.turn & 1));
+            document.getElementById('turn-right').classList.toggle('turn-active', !!(d.turn & 2));
+
+            // 오토파일럿(AP) 상태
+            currentApState = d.ap;
+            const apActive = (d.ap === 1 || d.ap === 2);
+            document.getElementById('ap-dot').className = apActive ? 'w-1.5 h-1.5 rounded-full bg-[#38BDF8]' : 'w-1.5 h-1.5 rounded-full bg-[#4B505B]';
+            document.getElementById('ap-text').textContent = apActive
+                ? (activeFsdCamState === 'chill' ? 'FSD Chill' : 'AP 활성')
+                : 'AP 대기';
+            document.getElementById('ap-text').className = apActive ? 'text-[#38BDF8] font-bold' : '';
+            document.getElementById('ap-text-mobile').textContent = apActive
+                ? (activeFsdCamState === 'chill' ? 'FSD Chill' : 'AP 활성')
+                : 'AP 대기';
+            document.getElementById('ap-text-mobile').className = apActive ? 'text-[#38BDF8] font-bold' : '';
+
+            // 핸들 잡기 경고 및 알림음
+            const handsAlert = document.getElementById('handson-alert');
+            handsAlert.classList.toggle('hidden', !d.handsOn);
+            if (d.handsOn && !lastHandsOnState) {
+                playWarningChime();
+            }
+            lastHandsOnState = d.handsOn;
+
+            // 회생제동 / 가속 출력 바
+            if (totalKw < 0) {
+                document.getElementById('bar-regen').style.width = `${Math.min(100, Math.round((-totalKw / 65) * 100))}%`;
+                document.getElementById('bar-power').style.width = '0%';
+            } else {
+                document.getElementById('bar-regen').style.width = '0%';
+                document.getElementById('bar-power').style.width = `${Math.min(100, Math.round((totalKw / 260) * 100))}%`;
+            }
+
+            // 4륜 TPMS 및 브레이크 온도
+            for (let t = 0; t < 4; t++) {
+                document.getElementById(`tpms-${t}`).textContent = d.tpms[t] ? `${d.tpms[t]} PSI` : '-- PSI';
+                document.getElementById(`brk-${t}`).textContent = (d.bTemps[t] !== null) ? `${d.bTemps[t]}°C` : '--°C';
+            }
+
+            // 주행 트립 통계 & 0-100km/h 제로백 타이머
+            if (tripStartOdo === null && d.odo > 0) tripStartOdo = d.odo;
+            if (tripStartOdo !== null && d.odo >= tripStartOdo) {
+                document.getElementById('trip-dist').textContent = `${(d.odo - tripStartOdo).toFixed(1)} km`;
+            }
+            if (d.speed > maxTripSpeed) {
+                maxTripSpeed = d.speed;
+                document.getElementById('trip-max-spd').textContent = `${maxTripSpeed} km/h`;
+            }
+            if (totalKw > maxTripKw) {
+                maxTripKw = totalKw;
+                document.getElementById('trip-max-kw').textContent = `${maxTripKw} kW`;
+            }
+
+            if (zeroToHundredMode === 1 && d.speed > 0) {
+                zeroToHundredMode = 2;
+                zeroToHundredStartTime = nowMs;
+                document.getElementById('btn-0100').textContent = '0-100: 측정중';
+            } else if (zeroToHundredMode === 2 && d.speed >= 100) {
+                const sec = ((nowMs - zeroToHundredStartTime) / 1000).toFixed(2);
+                zeroToHundredMode = 0;
+                document.getElementById('btn-0100').textContent = `0-100: ${sec}s`;
+                showToast(`0-100km/h 기록 달성: ${sec}초`);
+            }
+
+            // 가상 배기음 실시간 업데이트
+            if (!isPreviewingSound) {
+                updateEngineSound(d.speed, d.pedal);
+            }
+
+            if (currentTheme === 'dial') {
+                const dashLen = Math.min(595, Math.round((d.speed / 260) * 595));
+                document.getElementById('classic-dial-arc').setAttribute('stroke-dasharray', `${dashLen} 800`);
+            } else if (currentTheme === 'track') {
+                document.getElementById('track-peak-badge').textContent = `PK ${maxTripKw}kW`;
+                document.getElementById('track-pedal-bar-txt').textContent = `${d.pedal}%`;
+                document.getElementById('track-thr-vbar').style.height = `${d.pedal}%`;
+
+                const regenKw = totalKw < 0 ? Math.abs(totalKw) : 0;
+                document.getElementById('track-regen-txt').textContent = `${regenKw}kW`;
+                document.getElementById('track-reg-vbar').style.height = `${Math.min(100, Math.round((regenKw / 65) * 100))}%`;
+
+                const loadRatio = Math.min(1, Math.max(d.pedal / 100, Math.max(0, totalKw) / 260));
+                const litLeds = Math.round(loadRatio * 10);
+                const ledEls = document.getElementById('track-shift-leds').children;
+                for (let idx = 0; idx < 10; idx++) {
+                    if (idx < litLeds) {
+                        if (idx < 4) ledEls[idx].className = 'rounded-xs bg-[#22C55E] transition-colors duration-75';
+                        else if (idx < 7) ledEls[idx].className = 'rounded-xs bg-[#D97706] transition-colors duration-75';
+                        else ledEls[idx].className = 'rounded-xs bg-rose-500 transition-colors duration-75';
+                    } else {
+                        ledEls[idx].className = 'rounded-xs bg-[#24262B] transition-colors duration-75';
+                    }
+                }
+
+                document.getElementById('track-g-val').textContent = `${longG >= 0 ? '+' : ''}${longG.toFixed(2)}G`;
+                if (longG >= 0) {
+                    document.getElementById('track-g-acc').style.width = `${Math.min(100, Math.round((longG / 0.8) * 100))}%`;
+                    document.getElementById('track-g-dec').style.width = '0%';
+                } else {
+                    document.getElementById('track-g-acc').style.width = '0%';
+                    document.getElementById('track-g-dec').style.width = `${Math.min(100, Math.round((-longG / 0.8) * 100))}%`;
+                }
+            }
+        }
+
+        /**
+         * ============================================================================
+         * 5. 하단 퀵 서랍, 테마 전환, 제로백, 전체화면 컨트롤러
+         * ============================================================================
+         */
+        let activeDrawerId = null;
+
+        function toggleDrawer(id, btnEl) {
+            const isSame = activeDrawerId === id;
+            closeAllDrawers();
+            if (!isSame) {
+                activeDrawerId = id;
+                document.getElementById(`drawer-${id}`)?.classList.remove('hidden');
+                document.getElementById('drawer-backdrop')?.classList.remove('hidden');
+                if (btnEl) {
+                    btnEl.classList.add('border-[#D97706]', 'text-[#F2F3F5]');
+                }
+                if (id === 'battery' && tslBle.isConnected) {
+                    tslBle.send(208, [1]);
+                }
+            }
+        }
+
+        function closeAllDrawers() {
+            activeDrawerId = null;
+            document.querySelectorAll('.drawer-panel').forEach(el => el.classList.add('hidden'));
+            document.getElementById('drawer-backdrop')?.classList.add('hidden');
+            document.querySelectorAll('.dock-btn').forEach(btn => {
+                btn.classList.remove('border-[#D97706]', 'text-[#F2F3F5]');
+            });
+        }
+
+        function setClusterTheme(theme) {
+            currentTheme = theme;
+            ['minimal', 'plaid', 'dial', 'track'].forEach(t => {
+                const btn = document.getElementById(`th-${t}`);
+                if (!btn) return;
+                btn.className = (t === theme)
+                    ? 'py-2 rounded-lg bg-[#F2F3F5] text-[#121316] whitespace-nowrap btn-press'
+                    : 'py-2 rounded-lg bg-[#121316] border border-[#2B2E35] text-[#D1D5DB] whitespace-nowrap btn-press';
+            });
+
+            const canvasEl = document.getElementById('plaid-canvas');
+            const dialSvg = document.getElementById('classic-dial-svg');
+            const trackBox = document.getElementById('track-frame-box');
+            const speedEl = document.getElementById('val-speed');
+
+            canvasEl.classList.toggle('opacity-100', theme === 'plaid');
+            canvasEl.classList.toggle('opacity-0', theme !== 'plaid');
+            dialSvg.classList.toggle('hidden', theme !== 'dial');
+            trackBox.classList.toggle('hidden', theme !== 'track');
+
+            if (theme === 'dial') {
+                speedEl.classList.remove('speed-num');
+                speedEl.classList.add('speed-num-dial');
+            } else {
+                speedEl.classList.remove('speed-num-dial');
+                speedEl.classList.add('speed-num');
+            }
+
+            if (theme === 'plaid') initPlaidCanvas();
+            const names = { minimal: '미니멀', plaid: '플래드 워프', dial: '링 게이지', track: '트랙 모드' };
+            showToast(`테마 변경: ${names[theme] || theme}`);
+        }
+
+        function toggleHudMirror() {
+            isHudMirrored = !isHudMirrored;
+            document.getElementById('cluster-stage').classList.toggle('hud-mirror', isHudMirrored);
+            const btn = document.getElementById('th-mirror');
+            btn.className = isHudMirrored
+                ? 'px-2 py-0.5 rounded-md bg-[#F2F3F5] text-[11px] font-bold text-[#121316] btn-press'
+                : 'px-2 py-0.5 rounded-md bg-[#121316] border border-[#2B2E35] text-[11px] text-[#9CA3AF] btn-press';
+            showToast(isHudMirrored ? 'HUD 유리 반사 모드 켜짐' : 'HUD 유리 반사 모드 꺼짐');
+        }
+
+        function toggleZeroToHundred() {
+            const btn = document.getElementById('btn-0100');
+            if (zeroToHundredMode === 0) {
+                zeroToHundredMode = 1;
+                btn.textContent = '0-100: 출발대기';
+                showToast('정차 후 가속 시 0-100km/h 측정이 자동 시작됩니다.');
+            } else {
+                zeroToHundredMode = 0;
+                btn.textContent = '0-100: 대기';
+                showToast('0-100km/h 측정이 취소되었습니다.');
+            }
+        }
+
+        function resetTripStats() {
+            tripStartOdo = null;
+            maxTripSpeed = 0;
+            maxTripKw = 0;
+            document.getElementById('trip-dist').textContent = '0.0 km';
+            document.getElementById('trip-max-spd').textContent = '0 km/h';
+            document.getElementById('trip-max-kw').textContent = '0 kW';
+            showToast('주행 트립 기록이 초기화되었습니다.');
+        }
+
+        async function toggleFullscreen() {
+            try {
+                if (!document.fullscreenElement) {
+                    await document.documentElement.requestFullscreen();
+                } else {
+                    await document.exitFullscreen();
+                }
+            } catch (err) {
+                showToast('전체화면 전환이 제한된 환경입니다.');
+            }
+        }
+
+        function updateFullscreenIcon(isFs) {
+            document.getElementById('fs-icon-expand').classList.toggle('hidden', isFs);
+            document.getElementById('fs-icon-compress').classList.toggle('hidden', !isFs);
+        }
+
+        document.addEventListener('fullscreenchange', () => {
+            updateFullscreenIcon(!!document.fullscreenElement);
+            initPlaidCanvas();
+        });
+
+        let wakeLockSentinel = null;
+        async function toggleWakeLock() {
+            const btn = document.getElementById('btn-wakelock');
+            if (!('wakeLock' in navigator)) {
+                showToast('이 기기는 화면 꺼짐 방지를 지원하지 않습니다.');
+                return;
+            }
+            if (wakeLockSentinel) {
+                await wakeLockSentinel.release();
+                wakeLockSentinel = null;
+                btn.classList.remove('border-[#D97706]', 'text-[#D97706]');
+                showToast('화면 꺼짐 방지 해제됨');
+            } else {
+                try {
+                    wakeLockSentinel = await navigator.wakeLock.request('screen');
+                    btn.classList.add('border-[#D97706]', 'text-[#D97706]');
+                    showToast('주행 중 화면 꺼짐 방지 활성');
+                } catch (e) {
+                    showToast('화면 꺼짐 방지 활성화 실패');
+                }
+            }
+        }
+
+        function openPasswordModal() {
+            document.getElementById('pw-modal').classList.remove('hidden');
+        }
+        function closePasswordModal() {
+            document.getElementById('pw-modal').classList.add('hidden');
+        }
+        function savePasswordAndAuth() {
+            const val = document.getElementById('pw-input').value.trim();
+            if (val.length !== 4) {
+                showToast('비밀번호는 4자리여야 합니다.');
+                return;
+            }
+            blePassword = val;
+            localStorage.setItem('tsl_ble_key', val);
+            closePasswordModal();
+            if (tslBle.isConnected) {
+                tslBle.sendPassword(val);
+            }
+            showToast(`비밀번호(${val}) 저장 완료`);
+        }
+
+        let isDemoRunning = false;
+        let demoInterval = null;
+        let demoTick = 0;
+
+        function toggleDemoMode() {
+            const btn = document.getElementById('btn-demo');
+            if (isDemoRunning) {
+                isDemoRunning = false;
+                clearInterval(demoInterval);
+                btn.className = 'btn-press px-2.5 py-1.5 rounded-lg bg-[#1A1C20] border border-[#2B2E35] text-[#D1D5DB] text-[11px] font-semibold whitespace-nowrap';
+                btn.textContent = '데모';
+                updateEngineSound(0, 0);
+                showToast('시뮬레이션 데모 중지');
+            } else {
+                if (tslBle.isConnected) tslBle.disconnect();
+                isDemoRunning = true;
+                demoTick = 0;
+                btn.className = 'btn-press px-2.5 py-1.5 rounded-lg bg-[#F2F3F5] text-[#121316] text-[11px] font-bold whitespace-nowrap';
+                btn.textContent = '데모 중지';
+                showToast('가속 주행 시뮬레이션 시작');
+
+                document.getElementById('hv-vol').textContent = '396.4 V';
+                document.getElementById('hv-cur').textContent = '-118.5 A';
+                document.getElementById('hv-rem').textContent = '51.2 kWh';
+                document.getElementById('hv-full').textContent = '60.5 kWh';
+
+                demoInterval = setInterval(() => {
+                    demoTick++;
+                    const cycle = demoTick % 120;
+                    const isAccel = cycle < 75;
+                    const speed = isAccel
+                        ? Math.min(212, Math.round((cycle / 75) * 212))
+                        : Math.max(0, Math.round(212 - ((cycle - 75) / 45) * 212));
+                    const pedal = isAccel ? Math.min(100, Math.round(25 + (cycle / 75) * 75)) : 0;
+                    const totalKw = isAccel ? Math.round((pedal / 100) * 320) : (speed > 5 ? -48 : 0);
+                    const isDemoAp = cycle > 35 && cycle < 95;
+
+                    // 데모 모드에서도 전방 카메라 접근(45~72틱) 및 통과(73틱~) 시나리오 자동 시연
+                    if (camAutoChillEnabled) {
+                        if (cycle >= 45 && cycle <= 72) {
+                            const simDist = Math.max(20, Math.round((73 - cycle) * 16));
+                            showCameraBanner(100, simDist, isDemoAp);
+                            if (isDemoAp && activeFsdCamState !== 'chill') {
+                                activeFsdCamState = 'chill';
+                                playWarningChime();
+                                showToast(`단속 카메라 감지(${simDist}m) → FSD Chill 전환`);
+                            }
+                        } else if (cycle === 73 && activeFsdCamState === 'chill') {
+                            restorePreferredFsdProfile(isDemoAp);
+                        }
+                    }
+
+                    renderClusterState({
+                        speed,
+                        gear: speed === 0 && cycle > 110 ? 1 : 4,
+                        turn: (cycle > 15 && cycle < 32) ? 1 : ((cycle > 85 && cycle < 100) ? 2 : 0),
+                        ap: isDemoAp ? 1 : 0,
+                        soc: 84,
+                        odo: 18420.5 + demoTick * 0.04,
+                        tpms: ['42.1', '42.3', '41.8', '42.0'],
+                        pedal,
+                        frontKw: Math.round(totalKw * 0.36),
+                        rearKw: Math.round(totalKw * 0.64),
+                        alt: 42,
+                        speedUnit: 1,
+                        handsOn: cycle > 55 && cycle < 68 ? 1 : 0,
+                        bTemps: [46, 48, 41, 42],
+                        blowerRpm: 1650,
+                        hvacWatts: 820,
+                        cabinTemp: '21.5',
+                        ambTemp: '17.0',
+                        rangeKm: 425,
+                        battTemp: '29.5',
+                        limitSpd: 110
+                    });
+                }, 100);
+            }
+        }
+
+        let toastTimer = null;
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-msg').textContent = msg;
+            toast.classList.remove('opacity-0', '-translate-y-2');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                toast.classList.add('opacity-0', '-translate-y-2');
+            }, 2200);
+        }
+
+        initCameraAlertSystem();
+    </script>
+</body>
+</html>

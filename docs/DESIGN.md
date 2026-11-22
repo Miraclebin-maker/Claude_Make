@@ -1,0 +1,282 @@
+# TSL 계기판 v1 설계문서
+
+원본: `legacy/tslclu_v0.html` (단일 HTML, Tailwind CDN). 이 문서는 v1 재구성의 단일 기준이다.
+구현자는 이 문서에 없는 기능을 추가하지 않는다. 모호하면 구현을 멈추고 질문한다.
+
+---
+
+## 0. 요구사항 → 설계 매핑
+
+| # | 요구사항 | 설계 위치 |
+|---|---|---|
+| R1 | 읽기 전용(차량 쓰기 금지) | §3 송신 화이트리스트 |
+| R2 | 세로/가로 모두 지원 | §5 레이아웃 |
+| R3 | 마지막 기기 자동 연결 | §4 자동 연결 |
+| R4 | 실제 배기음에 가까운 사운드 | §6 사운드 엔진 |
+| R5 | 테마 추가, 플래드 테마는 실제 플래드 가속 느낌 | §7 테마 |
+| R6 | 웹 → APK 전환 | §9 (의견, 코드 구조로 대비) |
+| R7 | 가독성, 단순한 화면 | §5 레이아웃, §5.4 타이포그래피 |
+
+## 1. 확정된 의사결정 (근거 포함)
+
+1. **FSD 프로필 자동 전환(type 167 송신) 삭제.** 원본의 카메라 기능은 FSD Chill/Standard/Hurry 전환 명령을 차량에 보낸다. R1(쓰기 금지)에 정면으로 위배된다. 카메라 **경고(배너+경고음)만 유지**한다. "통과 후 복귀 프로필" 설정 UI도 삭제한다.
+2. **Tailwind CDN 제거 → 순수 CSS.** CDN 런타임 JIT는 로딩이 느리고, 오프라인(지하주차장 등)에서 깨지며, 공식적으로 프로덕션 비권장이다. CSS 변수 기반 테마와도 궁합이 좋다.
+3. **빌드 도구 없는 바닐라 ES 모듈, 다중 파일.** Web Bluetooth는 어차피 HTTPS(또는 localhost) 호스팅이 필요하므로 단일 파일의 이점이 없다. 나중에 Capacitor로 APK 포장할 때 그대로 `www/`로 쓴다.
+4. **PWA(manifest + service worker) 포함.** 홈 화면 설치, 전체화면 실행, 오프라인 실행. APK 전 단계의 "앱처럼 쓰기"를 해결한다.
+5. **프로토콜 파싱 로직(176/208)은 원본 비트 연산을 그대로 옮긴다.** 사용자가 "확정 명세"라고 했으므로 수정하지 않는다. 모듈로 분리해 테스트만 붙인다.
+6. **기존 기능 유지:** 데모, 0-100 측정, 트립 기록, TPMS/브레이크 온도, HV 팩, HUD 반전, 카메라 DB(가져오기/테스트/초기화), 경고음, EV 사운드 2종(한스짐머 EV, 플래드 워프), 테마 4종.
+7. **새 테마는 1개만 추가: "나이트".** 화면 단순화 요구(R7)와 충돌하지 않는 가장 실용적인 테마.
+
+## 2. 파일 구조
+
+```
+app/
+  index.html              # 마크업만. 인라인 스크립트 없음(서비스워커 등록 1줄 제외 가능)
+  manifest.webmanifest
+  sw.js                   # 앱 셸 캐시
+  icons/icon.svg          # 단순 아이콘 (sizes: "any", purpose: "any maskable")
+  css/app.css             # 레이아웃, 컴포넌트, 테마 변수
+  js/main.js              # 진입점: 초기화, 모듈 연결
+  js/protocol.js          # 순수 함수: 패킷 인코드/디코드, parse176, parse208, 화이트리스트  (DOM/navigator 사용 금지)
+  js/ble.js               # Web Bluetooth 전송 계층, 자동 연결/재연결
+  js/ui.js                # DOM 렌더링(render(state)), 시트, 토스트
+  js/settings.js          # localStorage 래퍼 (try/catch 필수)
+  js/camera.js            # GPS + 카메라 DB + 경고 (송신 없음)
+  js/demo.js              # 데모 데이터 생성기
+  js/plaid.js             # 플래드 캔버스 이펙트
+  js/audio/audio.js       # AudioContext, 프로필 전환, 볼륨, 경고음
+  js/audio/ev.js          # 기존 EV 프로필(zimmer, plaid) 이식
+  js/audio/rpm-model.js   # 순수 함수: 속도/페달 → 가상 RPM/기어
+  js/audio/engine-worklet.js  # AudioWorkletProcessor: 내연기관 합성
+tests/
+  protocol.test.mjs
+  rpm-model.test.mjs
+  smoke.mjs               # Playwright 스모크 (§10)
+package.json              # "test": "node --test tests/", devDependency 없음
+README.md                 # 실행/호스팅/Chrome 플래그 안내
+legacy/tslclu_v0.html     # 원본 (수정 금지)
+```
+
+## 3. 읽기 전용 보장 (R1)
+
+`protocol.js`:
+
+```js
+// 모듈 프로토콜 요청만 허용. 차량 제어 명령은 존재하지 않는다.
+export const ALLOWED_TX_TYPES = Object.freeze({
+  INFO: 160,       // 모듈 정보 요청 (HW 버전)
+  AUTH: 168,       // 모듈 비밀번호 인증
+  TELEMETRY: 176,  // 실시간 텔레메트리 구독 [1]/해제 [0]
+  HV_PACK: 208,    // 고전압 팩 정보 요청
+});
+export function encodePacket(type, payload) // 화이트리스트 외 type이면 Error throw
+```
+
+- 패킷 포맷은 원본과 동일: `55 7F type lenHi lenLo payload… sum(type..payload)&0xFF`.
+- `ble.js`는 반드시 `encodePacket`을 통해서만 송신한다. `writeValue*` 호출부는 `ble.js` 한 곳에만 존재해야 한다.
+- 테스트: 160/168/176/208은 통과, 167 및 그 외 임의 값은 throw.
+- 원본 `FSD_PROFILE_CMD`, `sendFsdSpeedProfileCmd`, `setPreferredFsdProfile`, 관련 UI/문구는 모두 제거.
+
+## 4. BLE 연결 및 자동 연결 (R3)
+
+### 4.1 상태 머신
+`idle → connecting → connected → (reconnecting) → connected` / 수동 해제 시 `idle`.
+UI에는 상태 점 1개 + 짧은 라벨만 표시(§5).
+
+### 4.2 최초 연결
+- 사용자 탭 → `requestDevice({ filters:[{services:[SVC]}] })` (원본과 동일 UUID).
+- 연결 성공 시 저장: `tsl_last_device_id`, `tsl_last_device_name`.
+- 연결 후 시퀀스(원본 유지): +180ms 비밀번호(168) → +150ms 정보(160) → +170ms 텔레메트리 구독(176 [1]) → 1초마다 176 [1] 유지.
+
+### 4.3 앱 실행 시 자동 연결
+1. `tsl_autoconnect`(기본 ON)가 켜져 있고 저장된 id가 있으면 시도.
+2. `navigator.bluetooth.getDevices` 가 있으면 목록에서 id 일치 기기를 찾는다.
+   - 찾으면 `device.gatt.connect()` 시도.
+   - 실패하고 `device.watchAdvertisements` 가 있으면 광고 수신 대기 → `advertisementreceived` 시 연결. 대기 중 라벨: "기기 찾는 중".
+   - 둘 다 실패하면 10초 간격 재시도(최대 무한, 화면이 보이는 동안만 — `visibilitychange`로 일시정지).
+3. `getDevices` 가 없거나 기기를 못 찾으면: 상단에 얇은 배너 "화면을 탭하면 TSL 모듈에 연결합니다". 다음 **아무 곳 첫 탭**(사용자 제스처)에서 `requestDevice` 호출. 이 배너는 한 번 탭하면 사라진다.
+4. 데모 모드 실행 중에는 자동 연결하지 않는다.
+
+### 4.4 끊김 시 재연결
+- `gattserverdisconnected` 이고 수동 해제가 아니면 재연결: 1s, 2s, 4s, 8s, 이후 15s 간격.
+- 토스트는 "연결 끊김 · 재연결 중" 1회만(원본의 중복 토스트 버그 수정: 수동 해제 시 `onDisconnected` 가 두 번 불리는 문제).
+- 재연결 시 `characteristicvaluechanged` 리스너 중복 등록 금지.
+
+### 4.5 설정
+설정 시트 "연결" 섹션: 자동 연결 ON/OFF, 비밀번호(4자리), "저장된 기기 지우기", 현재 기기명.
+
+## 5. 화면 레이아웃 (R2, R7)
+
+### 5.1 원칙
+- 주행 중 메인 화면에는 **운전에 필요한 것만**: 속도, 기어, 방향지시등, 출력/회생 바, 배터리%/주행가능거리, 제한속도, 경고(핸들/카메라).
+- 나머지(TPMS, 브레이크 온도, HV 팩, 트립, 온도, ODO, 고도)는 **정보 시트**로 이동.
+- 설정(사운드, 테마, 연결, 카메라, 데모, 0-100, 트립 초기화)은 **설정 시트**로 이동.
+- 상단 아이콘 버튼 6개 + 하단 독 5개 → **화면 버튼 2개(ⓘ 정보, ⚙ 설정)**. 연결 상태 표시는 탭 시 연결/해제.
+- 전체화면: 첫 탭 시 자동 요청(실패해도 조용히 무시). 화면 꺼짐 방지(Wake Lock): 연결됨 또는 데모 중이면 자동 요청, `visibilitychange` 로 복귀 시 재요청. 수동 버튼 제거.
+- 터치 타깃 최소 44×44px.
+
+### 5.2 세로 모드 (grid-template-areas)
+```
+┌────────────────────────────┐
+│ ● TSL        P R N D   84% │  status: 연결점+라벨 | 기어 | SOC
+│                     425 km │
+│ ═══════回生═══|═══출력════ │  power bar (높이 6px)
+│ (80)                       │  제한속도 표지(속도 영역 좌상단)
+│  ◀        128         ▶    │  방향지시등 + 속도
+│           km/h             │
+│         124 kW             │  총 출력 (회생 시 녹색 음수)
+│                            │
+│ [ⓘ]                    [⚙] │  하단 좌우 모서리
+└────────────────────────────┘
+```
+
+### 5.3 가로 모드 (`@media (orientation: landscape)`)
+```
+┌──────────────────────────────────────────────┐
+│ ● TSL              P R N D                84% │
+│ ════════════회생══════|══════출력════════════ │
+│ (80)                                    425km │
+│  ◀  124 kW          128           SOC바   ▶  │
+│     F 45 · R 79     km/h                      │
+│ [ⓘ]                                      [⚙] │
+└──────────────────────────────────────────────┘
+```
+- 좌측 열: 제한속도, 총 kW, F/R 분배. 중앙: 속도. 우측 열: 주행가능거리, SOC.
+- 속도 숫자는 세로·가로 모두 `font-size: min(28vw, 38dvh)` 계열 clamp로 화면 크기에 비례(구현자가 360×640, 390×844, 844×390, 640×360에서 잘리지 않게 조정).
+- `viewport-fit=cover` + `env(safe-area-inset-*)` 패딩.
+- 가로 스크롤 금지(`overflow:hidden`), 숫자 자릿수 변화로 레이아웃이 흔들리지 않도록 `font-variant-numeric: tabular-nums` + 속도 칸 고정 폭(3자리 기준).
+
+### 5.4 타이포그래피·색
+- 폰트: **Pretendard Variable** (`https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css`), 폴백 `system-ui, -apple-system, sans-serif`. JetBrains Mono, Inter 제거. 숫자도 Pretendard tabular-nums 사용.
+- 최소 글자 크기: 라벨 14px, 보조 수치 16px. (원본 9–11px 폐기)
+- 속도: weight 700, letter-spacing -0.02em.
+- 기본 색 토큰(`:root`):
+  `--bg #0B0C0E; --surface #16181C; --line #262930; --text #F4F5F7; --text-2 #A7ADB8; --text-3 #6B717C; --accent #E8A33D; --regen #34D399; --power #E8A33D; --warn #F59E0B; --danger #F43F5E; --info #38BDF8`
+- 보조 텍스트 대비 WCAG AA(4.5:1) 이상.
+- 비활성 기어 `--text-3`, 활성 기어 `--text` + 굵게.
+
+### 5.5 시트(정보/설정)
+- 화면 하단에서 올라오는 시트, 최대 높이 85dvh, 내부 스크롤. 배경 탭 또는 ✕로 닫기.
+- 가로 모드에서는 우측에서 나오는 사이드 시트(폭 min(420px, 60vw)).
+- 정보 시트 섹션: 타이어(4칸: PSI + 브레이크°C) / 배터리 팩(전압, 전류, 잔여·만충 kWh, 배터리 온도) — 시트 열 때 208 요청(원본 동작 유지) / 트립(거리, 최고속도, 최대출력, 0-100 기록) / 차량(ODO, 실내/외기 온도, 고도, 공조 W, HW 버전, AP 상태).
+- 설정 시트 섹션: 사운드 / 테마(+HUD 반전) / 연결 / 카메라 경고 / 기타(데모 시작·중지, 0-100 측정 시작, 트립 초기화).
+
+### 5.6 경고 오버레이 (원본 유지, 스타일만 정리)
+- 핸들 잡기 경고: 속도 아래 배너 + 경고음(상승 엣지 1회).
+- 카메라 경고: 상단 배너 "단속 카메라 320m · 제한 80". FSD 문구 삭제.
+- 제한속도 초과: 표지판 테두리 점멸.
+- AP 활성: 상태줄 기어 옆에 작은 파란 "AP" 칩(비활성 시 숨김).
+
+## 6. 사운드 엔진 (R4)
+
+### 6.1 문제 진단 (원본)
+원본 V8/GT는 고정된 몇 개 발진기의 주파수만 옮긴다. 실제 배기음의 핵심인 **실린더별 폭발 펄스의 불균일성(럼블), 배기관 공명, 부하에 따른 음색 변화, 변속 시 RPM 낙차, 오버런 팝** 이 없어 "신디사이저 윙윙" 소리가 난다.
+
+### 6.2 구조
+```
+main thread                              AudioWorklet (engine-worklet.js)
+rpm-model.js  ──(rpm, throttle 60Hz)──▶  펄스 생성기 → 배기관 웨이브가이드 → 머플러 필터
+                                          → 흡기/기계 노이즈 → 소프트 클립 → out
+```
+- `audioWorklet.addModule('js/audio/engine-worklet.js')`. 파라미터는 `AudioParam`(`rpm`, `throttle`, `gain`)로 전달, 프로필 설정은 `port.postMessage`.
+- AudioContext는 사용자 제스처 후에만 시작. 저장된 프로필이 있으면 첫 탭에서 자동 재개.
+
+### 6.3 펄스 생성 (worklet, 샘플 단위)
+- 크랭크 각 `θ` (0–720°, 4행정)를 매 샘플 `rpm/60*360/sampleRate` 만큼 전진.
+- 프로필별 점화 각도 배열을 지나칠 때마다 해당 실린더 펄스 발생.
+- 펄스 = 짧은 지수감쇠 노이즈 버스트(1.5–4ms) + 저역 감쇠 사인 "쿵"(펄스 주파수 대역). 진폭 = `(0.25 + 0.75*throttle) * (1 ± 6% 랜덤)`, 타이밍 지터 ±0.15ms.
+- 각 펄스는 실린더가 속한 뱅크(0/1)의 배기관으로 들어간다.
+
+### 6.4 배기관/머플러
+- 뱅크별 웨이브가이드: 딜레이 라인(길이 = 관 길이, 2–6ms) + 피드백 0.35–0.6 + 루프 내 1차 로우패스. 두 뱅크 길이를 약간 다르게(비대칭이 럼블을 만든다).
+- 머플러: 피킹 필터 2개(프로필별 공명 주파수) + 로우패스(컷오프 = `base + rpm*k1 + throttle*k2`, 1-pole 스무딩).
+- 흡기/기계 노이즈: 밴드패스 노이즈, 레벨 ∝ rpm, 중심주파수 ∝ rpm.
+- 마스터: `tanh(drive*x)/tanh(drive)`, `drive = 1.2 + 2.5*throttle`.
+
+### 6.5 프로필 (내연기관 2종 + 기존 EV 2종)
+| 키 | 이름 | 점화 각(720° 내) / 뱅크 | idle/레드존 | 성격 |
+|---|---|---|---|---|
+| `v8` | V8 머슬 | 크로스플레인: 각 실린더 90° 간격, 뱅크 배정 `[0,1,0,0,1,0,1,1]`(뱅크별 불균일 간격 → 고유의 두둥두둥) | 750 / 6500 | 저음 강조, 피킹 90Hz·220Hz |
+| `gt6` | GT 슈퍼카 (플랫6) | 120° 등간격, 뱅크 `[0,1,0,1,0,1]` | 950 / 8800 | 고RPM 울부짖음, 피킹 300Hz·900Hz, 로우패스 높게 |
+| `zimmer` | 한스짐머 EV | 원본 그대로 `ev.js`로 이식 | – | – |
+| `plaid` | 플래드 워프 | 원본 그대로 `ev.js`로 이식 | – | – |
+| `off` | 음소거 | | | |
+
+정확한 계수(감쇠, 피드백, 필터 Q)는 구현자가 청취 없이 정할 수 없으므로 **위 범위 내 값으로 시작하고 상수로 한 곳(`PROFILES` 객체)에 모은다.** 튜닝은 사용자 청취 피드백으로 이후 조정.
+
+### 6.6 가상 RPM 모델 (`rpm-model.js`, 순수 함수 + 상태 객체)
+```js
+export function createRpmModel(profile)  // {idle, redline, gearRatios[6], finalDrive, wheelCircM}
+export function stepRpm(model, { speedKmh, pedalPct, dtSec }) // → { rpm, gear, throttle, event }
+```
+- 바퀴 회전 기반 RPM = `speed/3.6 / wheelCirc * 60 * ratio[gear] * finalDrive`, `max(idle, …)`.
+- 자동 변속: 업시프트 RPM = `lerp(0.45, 0.92, pedal/100) * redline`, 다운시프트 RPM = `idle*1.6`(킥다운: 페달 > 85%이고 한 단 낮춰도 레드라인 미만이면 다운).
+- 변속 시: 0.12s 동안 throttle 0 (점화 컷), RPM은 새 기어 값으로 시상수 0.08s 로 이동. `event: 'upshift'|'downshift'`.
+- 정차(속도<2) 시: idle ± 25rpm 느린 흔들림; 페달 입력 시 공회전 레브(`idle + pedal*0.6*redline`, 시상수 0.15s 상승 / 0.35s 하강).
+- 레브 리미터: rpm ≥ redline 이면 worklet에서 펄스를 50ms 주기로 절반 컷.
+- 오버런: throttle이 0.6→0.1 미만으로 급감하고 rpm > 0.45*redline 이면 0.4–1.2s 동안 worklet이 랜덤 팝(밴드패스 노이즈 크랙, 확률 기반) 발생.
+- RPM 스무딩: 시상수 0.1s (계기 데이터가 거칠어도 소리가 끊기지 않게).
+- 업데이트 주기: `requestAnimationFrame` 또는 50ms 타이머로 최신 텔레메트리 값 기반 보간.
+
+### 6.7 설정
+설정 시트 "사운드": 프로필 5개 버튼, 볼륨 슬라이더(0–100, 기본 60, 저장), "가속 미리듣기"(누르는 동안 0→레드존 램프, 원본 동작 유지), 경고음 ON/OFF.
+
+## 7. 테마 (R5)
+
+모든 테마는 `<html data-theme="…">` + CSS 변수로 전환. 레이아웃은 바꾸지 않고 장식 요소만 켜고 끈다.
+
+| 키 | 이름 | 내용 |
+|---|---|---|
+| `minimal` | 미니멀 (기본) | §5.4 색 그대로 |
+| `plaid` | 플래드 | §7.1 |
+| `dial` | 링 게이지 | 원본 링 SVG 유지, 속도 뒤 270° 아크 |
+| `track` | 트랙 | 원본 시프트 LED 10구·스로틀/회생 세로바·G 미터 유지. 텍스트 최소 14px로 상향. 가로 모드에선 좌/우 열에 배치 |
+| `night` | 나이트 (신규) | 배경 #000, 모든 텍스트/선을 앰버(#FFB347 계열) 단색으로, 전체 밝기 약 60%. 야간 눈부심 감소용. 장식 없음 |
+
+### 7.1 플래드 테마 — "실제 플래드 가속" 연출
+가정: 사용자가 말한 "플래드모드 주행효과"는 플래드 가속 시 화면에 나오는 **광속(하이퍼스페이스) 빛줄기가 소실점으로부터 뻗어 나오는 연출**이다. (틀리면 사용자 확인 후 수정)
+
+원본의 문제: 강도가 페달·속도만으로 결정되어 정속 고속주행에서도 계속 워프가 나오고, 가속감과 무관하다.
+
+설계:
+- **강도 `I` (0–1) = 가속도 기반.** `I = clamp(max(accelG/0.6, totalKw/peakKw*0.8), 0, 1)`, `peakKw` 는 트립 최대출력(최소 200). accelG는 속도 미분값을 EMA(시상수 0.3s) 스무딩. `I` 자체도 상승 시상수 0.15s, 하강 0.8s.
+- `I < 0.05`: 별 입자가 아주 느리게 앞으로 흘러가는 정적인 공간(거의 검정).
+- `I` 증가 시: 빛줄기 속도·길이 증가(길이 ∝ I²), 중심부 청백색 블룸(라디얼 그라디언트), 가장자리 약한 비네트.
+- `I > 0.6` (풀 가속): 빛줄기가 소실점에서 쏟아지는 하이퍼스페이스, 속도 숫자에 청백색 글로우, 화면 전체 미세 진동(±1px, 30Hz 이내) 0.3s.
+- 감속/회생(accelG < -0.1): 빛줄기가 감속하며 짧아지고 색이 따뜻한 적색 계열로 잠깐 이동.
+- 색: 줄기 85% 흰색~청색(#DDEBFF, #7FB7FF), 15% 적색 포인트(#FF3B5C, 플래드 상징색).
+- 소실점: 속도 숫자 중심.
+- 성능: 입자 160개, `devicePixelRatio` 최대 2, 테마가 plaid가 아니면 rAF 루프 정지(원본은 항상 돌았음 → 배터리 낭비 수정). `prefers-reduced-motion` 이면 진동 생략.
+
+## 8. 카메라 경고 (송신 없음)
+- 원본 로직(GPS watch, haversine, 진행방향 ±50°, 감지 반경 300/500m, 통과 판정, JSON/CSV 가져오기, 테스트 좌표, DB 초기화) 유지.
+- 접근 시: 배너 + 경고음 1회. 통과 시 배너 숨김. **차량 송신 없음.**
+- 설정: 기능 ON/OFF, 감지 거리 300/500m, DB 개수, 가져오기/테스트/초기화.
+- DB 저장은 localStorage 유지(용량 초과 시 try/catch로 토스트 "DB가 너무 큽니다").
+
+## 9. 웹 vs APK (R6) — 의견
+
+**결론: 지금은 웹(PWA)으로 계속 개발하고, 자동 연결이 웹에서 기대만큼 안 되면 그 시점에 Capacitor로 APK 포장한다.** 코드를 새로 짤 필요 없이 `app/` 폴더를 그대로 감싼다.
+
+- 웹으로 개발하는 이유: 수정→새로고침 사이클이 빠르고, 데모 모드로 PC에서 UI/사운드를 확인할 수 있다.
+- APK가 필요해지는 이유(웹의 한계):
+  1. **자동 연결**: Web Bluetooth의 `getDevices()`/`watchAdvertisements()`는 Android Chrome에서 플래그(`chrome://flags/#enable-web-bluetooth-new-permissions-backend`)가 필요할 수 있다. 네이티브는 제한 없음.
+  2. 화면 꺼짐/백그라운드 시 연결 유지, BLE 안정성.
+  3. iPhone은 Web Bluetooth 자체가 없다(Safari 미지원) → 아이폰 지원이 필요하면 무조건 네이티브.
+- 대비: `ble.js` 의 외부 인터페이스(`connect, disconnect, autoConnect, onPacket, onState, send`)를 고정해 두면 APK 전환 시 `@capacitor-community/bluetooth-le` 기반 구현으로 이 파일만 교체하면 된다.
+- 이번 범위에서는 Capacitor 작업을 하지 않는다.
+
+## 10. 테스트·검증 기준 (완료 조건)
+
+1. `node --test tests/` 전부 통과:
+   - `protocol.test.mjs`: encode→decode 왕복(체크섬 포함, 분할 수신 바이트 스트림), 잘못된 체크섬 폐기, 화이트리스트(160/168/176/208 허용, 167·0·255 throw), parse176에 비트 패킹한 샘플 버퍼 넣어 speed/gear/turn/ap/soc/odo/pedal/frontKw/rearKw(음수 포함) 값 검증, 33바이트 미만 버퍼에서 확장 필드 기본값, parse208 값 검증.
+   - `rpm-model.test.mjs`: 정차 시 idle 근처, 가속 시 업시프트 발생하고 rpm ≤ redline, 저부하 업시프트 RPM < 고부하 업시프트 RPM, 변속 직후 throttle=0 구간 존재, 오버런 이벤트 조건.
+2. `grep` 기준: `app/` 내에 `167`을 송신하는 코드, `FSD_PROFILE`, `tailwind` 문자열이 없어야 한다. `writeValue` 는 `ble.js`에만.
+3. `tests/smoke.mjs` (Playwright, `python3 -m http.server`로 `app/` 서빙):
+   - 뷰포트 390×844, 844×390, 360×640, 640×360 각각에서 데모 시작 → 3초 후 스크린샷(`tests/screens/`, git 제외) 저장.
+   - 콘솔 에러 0, `document.documentElement.scrollWidth <= innerWidth`, 속도 요소가 뷰포트 안에 완전히 보임.
+   - 5개 테마 각각 전환 시 에러 없음.
+4. 사운드는 자동 테스트 불가 → worklet이 콘솔 에러 없이 로드되는지만 스모크에서 확인(Playwright Chromium에서 `audioWorklet.addModule` 성공 여부).
+
+## 11. 범위 밖
+Capacitor/APK 빌드, 차량 쓰기 기능 일체, 새 데이터 필드 파싱, 클라우드/계정, 음원 샘플 파일 사용.
