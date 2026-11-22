@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ko" data-theme="minimal">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0B0C0E">
+  <meta name="color-scheme" content="dark">
+  <title>TSL 계기판</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <canvas id="plaid-canvas" class="plaid-canvas" aria-hidden="true"></canvas>
+
+  <div id="app" class="app">
+    <header class="status">
+      <button id="btn-conn" class="conn" type="button" data-act="conn">
+        <span id="conn-dot" class="dot" data-state="idle"></span>
+        <span id="conn-label">BLE 연결</span>
+      </button>
+      <div class="gear-wrap">
+        <div class="gears" aria-label="기어">
+          <span data-gear="1">P</span><span data-gear="2">R</span><span data-gear="3">N</span><span data-gear="4">D</span>
+        </div>
+        <span id="ap-chip" class="ap-chip" hidden>AP</span>
+      </div>
+      <div class="soc-block">
+        <span class="soc"><span id="val-soc">--</span><small>%</small></span>
+        <span class="range"><span id="val-range">--</span> km</span>
+      </div>
+    </header>
+
+    <div class="bar" aria-hidden="true">
+      <div class="bar-l"><div id="bar-regen" class="bar-regen"></div></div>
+      <div class="bar-r"><div id="bar-power" class="bar-power"></div></div>
+    </div>
+
+    <div id="hint" class="hint" role="status" hidden>화면을 탭하면 TSL 모듈에 연결합니다</div>
+
+    <main id="cluster" class="cluster">
+      <div id="limit" class="limit" aria-label="제한 속도">
+        <span class="limit-k">LIMIT</span>
+        <b id="val-limit">--</b>
+      </div>
+
+      <div id="kw-block" class="kw-block">
+        <div class="kw"><b id="val-kw">0</b><small>kW</small></div>
+        <div class="kw-fr">F:<span id="val-front">0</span> · R:<span id="val-rear">0</span></div>
+      </div>
+
+      <div class="center">
+        <svg id="dial" class="dial" viewBox="0 0 280 280" aria-hidden="true">
+          <circle cx="140" cy="140" r="126" fill="none" stroke="#1E2026" stroke-width="6" stroke-dasharray="595 800"/>
+          <circle id="dial-arc" cx="140" cy="140" r="126" fill="none" stroke="var(--accent)" stroke-width="6" stroke-linecap="round" stroke-dasharray="0 800"/>
+        </svg>
+
+        <div id="track" class="track" aria-hidden="true">
+          <div class="track-top">
+            <span class="track-label">SHIFT</span>
+            <div id="track-leds" class="leds">
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <span id="track-peak" class="track-peak">PK 0kW</span>
+          </div>
+          <div class="track-mid">
+            <div class="vbar-group">
+              <div class="vbar"><div id="track-thr" class="vbar-fill thr"></div></div>
+              <div class="vbar-txt"><span>THR</span><b id="track-pedal-txt">0%</b></div>
+            </div>
+            <div class="vbar-group right">
+              <div class="vbar-txt right"><span>REG</span><b id="track-regen-txt">0kW</b></div>
+              <div class="vbar"><div id="track-regen" class="vbar-fill regen"></div></div>
+            </div>
+          </div>
+          <div class="track-bottom">
+            <span class="track-label">LONG-G</span>
+            <div class="gmeter">
+              <div class="g-dec"><div id="track-g-dec" class="g-fill dec"></div></div>
+              <div class="g-acc"><div id="track-g-acc" class="g-fill acc"></div></div>
+            </div>
+            <b id="track-g-txt">0.00G</b>
+          </div>
+        </div>
+
+        <div class="center-row">
+          <svg id="turn-l" class="turn" viewBox="0 0 24 24" aria-label="좌측 방향지시등"><path d="M11 4L3 12l8 8v-5h10V9H11V4z"/></svg>
+          <div class="speed-wrap">
+            <div id="val-speed" class="speed">0</div>
+            <div class="speed-meta"><span id="val-unit">km/h</span><span class="sep"></span><span>PEDAL <b id="val-pedal">0</b>%</span></div>
+          </div>
+          <svg id="turn-r" class="turn" viewBox="0 0 24 24" aria-label="우측 방향지시등"><path d="M13 4l8 8-8 8v-5H3V9h10V4z"/></svg>
+        </div>
+      </div>
+
+      <div id="hands-alert" class="hands-alert" role="alert" hidden>스티어링 휠을 가볍게 잡아주세요</div>
+      <div id="cam-banner" class="cam-banner" role="alert" hidden>
+        <div class="cam-badge"><span id="cam-limit">80</span></div>
+        <div class="cam-text">
+          <div class="cam-title">전방 단속 카메라 <span id="cam-dist" class="cam-dist">0m</span></div>
+          <div class="cam-sub">제한 속도 <span id="cam-limit-2">80</span> km/h</div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="dock">
+      <button type="button" class="round" data-act="info" aria-label="정보">ⓘ</button>
+      <button type="button" class="round" data-act="settings" aria-label="설정">⚙</button>
+    </footer>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"><span id="toast-msg"></span></div>
+  </div>
+
+  <div id="scrim" class="scrim" data-act="close" hidden></div>
+
+  <section id="sheet-info" class="sheet" aria-labelledby="info-title" hidden>
+    <header class="sheet-head">
+      <h2 id="info-title">정보</h2>
+      <button type="button" class="x" data-act="close" aria-label="닫기">✕</button>
+    </header>
+    <div class="sheet-body">
+      <h3>타이어 · 브레이크</h3>
+      <div class="grid4">
+        <div class="cell"><span>전좌 FL</span><b id="tpms-0">--</b><small id="brk-0">--</small></div>
+        <div class="cell"><span>전우 FR</span><b id="tpms-1">--</b><small id="brk-1">--</small></div>
+        <div class="cell"><span>후좌 RL</span><b id="tpms-2">--</b><small id="brk-2">--</small></div>
+        <div class="cell"><span>후우 RR</span><b id="tpms-3">--</b><small id="brk-3">--</small></div>
+      </div>
+
+      <h3>고전압 배터리</h3>
+      <dl class="kv">
+        <div><dt>팩 전압</dt><dd id="hv-vol">--</dd></div>
+        <div><dt>팩 전류</dt><dd id="hv-cur">--</dd></div>
+        <div><dt>잔여 용량</dt><dd id="hv-rem">--</dd></div>
+        <div><dt>만충 용량</dt><dd id="hv-full">--</dd></div>
+        <div><dt>배터리 온도</dt><dd id="hv-batt-temp">--</dd></div>
+      </dl>
+
+      <h3>트립</h3>
+      <dl class="kv">
+        <div><dt>주행 거리</dt><dd id="trip-dist">0.0 km</dd></div>
+        <div><dt>최고 속도</dt><dd id="trip-max-spd">0 km/h</dd></div>
+        <div><dt>최대 출력</dt><dd id="trip-max-kw">0 kW</dd></div>
+        <div><dt>0-100 기록</dt><dd id="zero-status">대기</dd></div>
+      </dl>
+
+      <h3>차량</h3>
+      <dl class="kv">
+        <div><dt>ODO</dt><dd id="veh-odo">--</dd></div>
+        <div><dt>실내 / 외기</dt><dd id="veh-temp">--</dd></div>
+        <div><dt>고도</dt><dd id="veh-alt">--</dd></div>
+        <div><dt>공조</dt><dd id="veh-hvac">--</dd></div>
+        <div><dt>HW 버전</dt><dd id="veh-hw">--</dd></div>
+        <div><dt>AP 상태</dt><dd id="veh-ap">--</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section id="sheet-settings" class="sheet" aria-labelledby="settings-title" hidden>
+    <header class="sheet-head">
+      <h2 id="settings-title">설정</h2>
+      <button type="button" class="x" data-act="close" aria-label="닫기">✕</button>
+    </header>
+    <div class="sheet-body">
+      <h3>사운드</h3>
+      <div class="seg5">
+        <button type="button" data-sound="off">음소거</button>
+        <button type="button" data-sound="zimmer">한스짐머 EV</button>
+        <button type="button" data-sound="plaid">플래드 워프</button>
+        <button type="button" data-sound="v8">V8 머슬카</button>
+        <button type="button" data-sound="gt6">GT 슈퍼카</button>
+      </div>
+      <div class="row">
+        <label for="sound-volume">볼륨</label>
+        <input id="sound-volume" type="range" min="0" max="100" step="1" value="60">
+        <span id="volume-val" class="val">60</span>
+      </div>
+      <div class="row wrap">
+        <button type="button" id="btn-preview" class="btn">가속 사운드 테스트</button>
+        <button type="button" id="btn-chime" class="btn" data-act="chime">경고음: ON</button>
+      </div>
+
+      <h3>테마</h3>
+      <div class="seg5">
+        <button type="button" data-theme="minimal">미니멀</button>
+        <button type="button" data-theme="plaid">플래드</button>
+        <button type="button" data-theme="dial">링 게이지</button>
+        <button type="button" data-theme="track">트랙</button>
+        <button type="button" data-theme="night">나이트</button>
+      </div>
+      <div class="row">
+        <span>HUD 반전</span>
+        <button type="button" id="btn-mirror" class="toggle" data-act="mirror">OFF</button>
+      </div>
+
+      <h3>연결</h3>
+      <div class="row">
+        <span>자동 연결</span>
+        <button type="button" id="btn-autoconnect" class="toggle" data-act="autoconnect">ON</button>
+      </div>
+      <div class="row">
+        <label for="pw-input">비밀번호 (4자리)</label>
+        <input id="pw-input" type="text" inputmode="text" maxlength="4" autocomplete="off">
+        <button type="button" class="btn" data-act="save-pw">저장</button>
+      </div>
+      <div class="row">
+        <span>현재 기기</span>
+        <span id="dev-name" class="val">없음</span>
+      </div>
+      <div class="row">
+        <button type="button" class="btn danger" data-act="forget">저장된 기기 지우기</button>
+      </div>
+
+      <h3>카메라 경고</h3>
+      <div class="row">
+        <span>기능</span>
+        <button type="button" id="btn-cam" class="toggle" data-act="cam-toggle">ON</button>
+        <span id="gps-badge" class="badge">GPS 대기</span>
+      </div>
+      <div class="row">
+        <span>감지 거리</span>
+        <div class="seg2">
+          <button type="button" data-act="cam-radius" data-r="300">300m</button>
+          <button type="button" data-act="cam-radius" data-r="500">500m</button>
+        </div>
+      </div>
+      <div class="row">
+        <span>등록된 카메라</span>
+        <span id="cam-count" class="val">0 개</span>
+      </div>
+      <div class="row wrap">
+        <button type="button" class="btn" data-act="cam-test">+ 테스트 좌표</button>
+        <button type="button" class="btn" data-act="cam-import">JSON/CSV 열기</button>
+        <button type="button" class="btn danger" data-act="cam-clear">DB 초기화</button>
+      </div>
+      <p class="note">CSV: 위도,경도,제한속도 · JSON: [{"lat":37.5,"lng":127.0,"limit":80}]</p>
+
+      <h3>기타</h3>
+      <div class="row wrap">
+        <button type="button" id="btn-demo" class="btn" data-act="demo">데모 시작</button>
+        <button type="button" id="btn-zero" class="btn" data-act="zero">0-100 측정 시작</button>
+        <button type="button" class="btn" data-act="trip-reset">트립 초기화</button>
+      </div>
+    </div>
+  </section>
+
+  <input id="cam-file" type="file" accept=".json,.csv,text/csv,application/json" hidden>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
