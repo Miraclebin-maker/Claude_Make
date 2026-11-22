@@ -420,3 +420,28 @@ Capacitor/APK 빌드, 차량 쓰기 기능 일체, 새 데이터 필드 파싱, 
 - 가로 트윈 카메라 배너는 좌상단에 둔다(상단 중앙은 제한속도 표지와 겹침). 링에 살짝 닿는 것은 일시 오버레이라 허용.
 - 화면 켜짐 상태는 "사용 중 / 대기 / 이 브라우저는 지원하지 않음" 세 가지로 표시한다("대기"는 보이지 않을 때나 요청 전).
 - 스모크 컨텍스트에는 `screen-wake-lock` 권한을 부여한다(헤드리스 기본값은 거부).
+
+## 17. 배기음 v3: 물리 모델 렌더링 샘플 (청취 단계)
+
+사용자 결정: 실제 녹음 대신 **물리 모델 엔진 시뮬레이터 방식**으로 V10 고회전·플랫6(911 GT3 계열) 샘플을 먼저 만들어 들어본 뒤, 괜찮으면 앱에 넣는다. 이번 단계는 **청취용 샘플 제작까지만** 하고 앱은 수정하지 않는다.
+
+### 17.1 출처와 제약
+- 알고리즘 출처: DasEtwas/enginesound (MIT, https://github.com/DasEtwas/enginesound). 소스 사본: `/tmp/claude-0/-home-user-Claude-Make/757d64b8-d4b3-5822-a063-47a9049f8f05/scratchpad/enginesound` (읽기 전용 참고).
+- **이 Rust 프로그램을 빌드하거나 실행하지 않는다**(보안 정책: 외부 코드 실행 금지). `src/gen.rs`(엔진 모델), `src/utils.rs`(필요한 필터 등)를 **읽고** 같은 계산을 우리 JavaScript로 옮긴다.
+- 옮긴 코드 파일 맨 위에 출처와 MIT 저작권 표시를 넣고, `tools/engine-render/LICENSE-enginesound.txt`에 원본 MIT 라이선스 전문을 둔다.
+
+### 17.2 렌더러
+- `tools/engine-render/engine-model.mjs`: gen.rs의 엔진 모델 포팅(실린더, 흡기·배기·익스트랙터 웨이브가이드, 머플러, 크랭크샤프트 진동, 노이즈 등 gen.rs에 있는 그대로). 순수 JS, 외부 의존성 없음. AudioWorklet에서도 쓸 수 있게 DOM/Node API 없이 작성(다음 단계 대비).
+- `tools/engine-render/presets/`: 엔진 설정 JSON.
+  - `v10.json`: 원본 `example1.esc` 또는 `example2.esc`(둘 다 10기통)를 JSON으로 옮긴 것. 둘 다 렌더해서 더 좋은 쪽을 고르되 둘 다 남긴다(`v10a.json`, `v10b.json`).
+  - `flat6.json`: 6기통. 크랭크 오프셋은 4행정 등간격 점화(i/6, 점화 순서 1-6-2-4-3-5에 맞춰 배치), 박서 좌우 뱅크로 배기관 지연을 두 그룹으로 약간 다르게. 나머지 파라미터는 V10 프리셋을 바탕으로 더 높은 회전·더 날카로운 음색이 되게 조정(배기 웨이브가이드 지연 짧게 등). 조정 근거를 주석으로.
+- `tools/engine-render/render.mjs`(Node CLI): 프리셋과 RPM 곡선을 받아 16-bit mono 48kHz WAV 출력. 출력 볼륨 정규화(피크 -1 dBFS).
+- 렌더 결과(저장소 밖, 스크래치패드 `.../scratchpad/engine-samples/`):
+  1. `v10a-sweep.wav`, `v10b-sweep.wav`, `flat6-sweep.wav`: 공회전(1000rpm) 2초 → 9000rpm까지 4초 동안 가속 → 레드존 1초 → 1500rpm까지 3초 감속 (총 10초). 가속 구간은 부하 높게, 감속 구간은 부하 낮게(모델에 부하/스로틀 파라미터가 없으면 RPM만).
+  2. 각 엔진의 고정 RPM 루프 2초: 1000, 3000, 6000, 9000rpm (`<engine>-<rpm>.wav`). 원본 README의 크로스페이드 루프 방식 사용.
+- `package.json`에 스크립트 추가하지 않는다(도구는 수동 실행).
+
+### 17.3 검증
+- `tests/engine-model.test.mjs`: 무음/NaN 없음, 피크 정규화, RPM이 오를수록 기본 점화 주파수(rpm/60 × 실린더/2) 근처 에너지가 이동하는지(간단한 영교차·FFT 근사로).
+- 렌더 결과 파일 길이·샘플레이트 확인.
+- 구현자는 청취 불가하므로 파형 통계(RMS, 피크, 주요 주파수)를 보고서에 표로.
