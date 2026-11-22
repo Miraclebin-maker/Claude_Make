@@ -7,6 +7,8 @@ import { createAudio } from './audio/audio.js';
 import { createCameraWatch } from './camera.js';
 import { createDemo, DEMO_HV } from './demo.js';
 import { createPlaid } from './plaid.js';
+import { APP_VERSION, APP_FILES } from './version.js';
+import { controllerChangeAction } from './update-policy.js';
 
 const SOUND_LABEL = {
   off: '음소거',
@@ -40,6 +42,7 @@ const state = {
   devName: savedDevice ? savedDevice.name : '',
   cam: { enabled: settings.isCamEnabled(), radius: settings.getCamRadius(), gps: '대기', count: 0, banner: null },
   plaidHyper: false,
+  quit: false, // 종료 후 true: 연결·재생·GPS·화면 꺼짐 방지를 모두 막는다
   sheet: null,
   latest: { speed: 0, pedal: 0, kw: 0 },
   fullscreen: false,
@@ -210,7 +213,7 @@ function toggleDemo() {
 
 // ---- 연결 ---------------------------------------------------------------
 async function connectNow() {
-  if (state.conn.state === 'connecting') return;
+  if (state.quit || state.conn.state === 'connecting') return;
   state.hint = false;
   if (state.demo) stopDemo(false);
   const err = await ble.connect();
@@ -232,7 +235,7 @@ function toggleConnection() {
 // ---- 화면 꺼짐 방지 (연결 또는 데모 중 자동) ------------------------------
 let wakeSentinel = null;
 async function syncWakeLock() {
-  const want = state.conn.state === 'connected' || state.demo;
+  const want = !state.quit && (state.conn.state === 'connected' || state.demo);
   if (!('wakeLock' in navigator)) return;
   if (want && !wakeSentinel) {
     try {
@@ -317,6 +320,9 @@ function forgetDevice() {
 
 // ---- 이벤트 바인딩 ------------------------------------------------------
 const ACTIONS = {
+  'refresh-app': () => refreshApp(),
+  quit: () => quitApp(),
+  restart: () => location.reload(),
   conn: () => toggleConnection(),
   info: () => openSheet('info'),
   settings: () => openSheet('settings'),
@@ -386,6 +392,7 @@ document.addEventListener('click', (e) => {
 // 첫 클릭: 전체화면 요청. 매 클릭: 오디오 컨텍스트 생성/재개. 힌트 상태면 탭 위치에 따라 블루투스 연결.
 let gestureDone = false;
 document.addEventListener('click', (ev) => {
+  if (state.quit) return;
   if (!gestureDone) {
     gestureDone = true;
     if (!document.fullscreenElement) {
@@ -445,8 +452,71 @@ async function boot() {
   schedule();
 }
 
+// ---- 버전·캐시 (§15.1, §15.2) ------------------------------------------
+// 새로고침 버튼: 서비스워커 해제, 캐시 전부 삭제, 파일을 HTTP 캐시까지 새로 받고, 다시 로드한다. 설정(localStorage)은 유지.
+async function refreshApp() {
+  ui.toast('최신 버전을 불러옵니다');
+  setTimeout(async () => {
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      // 서버 max-age 때문에 브라우저 HTTP 캐시에 옛 파일이 남는 것을 막는다
+      await Promise.all(APP_FILES.map((u) => fetch(u, { cache: 'reload' }).catch(() => {})));
+    } catch (e) { /* 실패해도 다시 로드한다 */ }
+    location.reload();
+  }, 400);
+}
+
+// 종료 (§15.3): 모든 기능을 멈추고 창 닫기를 시도한다. 닫히지 않으면 종료 오버레이를 보인다.
+function quitApp() {
+  if (state.quit) return;
+  state.quit = true;
+  state.sheet = null;
+  state.hint = false;
+  if (state.demo) stopDemo(false);
+  ble.shutdown();
+  cam.stop();
+  plaid.stop();
+  audio.close();
+  syncWakeLock();
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  schedule();
+  try { window.close(); } catch (e) { /* 스크립트로 닫을 수 없는 탭 */ }
+  setTimeout(() => {
+    document.getElementById('quit-overlay').hidden = false;
+  }, 300);
+}
+
+document.getElementById('app-version').textContent = APP_VERSION;
+
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  // 설정 파일을 HTTP 캐시에서 읽지 않도록 워커 스크립트를 항상 서버에서 확인한다.
+  const hadController = !!navigator.serviceWorker.controller;
+  let swReloaded = false;
+  let swToasted = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // 새 워커가 제어권을 가져갔다. 미연결이면 새 파일로 한 번만 다시 로드(무한 새로고침 방지).
+    // 주행 중·데모 중이면 새로고침하지 않고 안내만 한 번 띄운다 (§15.1).
+    if (!hadController) return;
+    const action = controllerChangeAction({ connState: state.conn.state, demo: state.demo });
+    if (action === 'reload') {
+      if (swReloaded) return;
+      swReloaded = true;
+      location.reload();
+      return;
+    }
+    if (!swToasted) {
+      swToasted = true;
+      ui.toast('새 버전이 준비되었습니다 · 설정 › 앱에서 새로고침');
+    }
+  });
+  navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {});
 }
 
 boot();

@@ -19,6 +19,7 @@ export class TslBle {
     this.state = 'idle'; // idle | connecting | searching | connected | reconnecting
     this.name = '';
     this.manual = false;
+    this.closed = false; // 앱 종료 후에는 어떤 자동 연결도 시작하지 않는다
     this.mtu = 120;
     this.decoder = new PacketDecoder();
     this.txQueue = Promise.resolve();
@@ -42,7 +43,7 @@ export class TslBle {
 
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
-        if (!document.hidden && this.retryPending) {
+        if (!document.hidden && this.retryPending && !this.closed) {
           this.retryPending = false;
           this.autoConnect();
         }
@@ -80,6 +81,7 @@ export class TslBle {
 
   // 사용자 탭 -> requestDevice. 실패 시 사용자에게 보여줄 문구를, 성공/취소 시 null 을 돌려준다.
   async connect() {
+    if (this.closed) return null;
     if (!navigator.bluetooth) {
       return '이 브라우저는 Web Bluetooth를 지원하지 않습니다. Chrome을 이용해 주세요.';
     }
@@ -99,6 +101,12 @@ export class TslBle {
       this.setState('idle', '');
       return err && err.name === 'NotFoundError' ? null : `연결 오류: ${err && err.message}`;
     }
+  }
+
+  // 앱 종료: 연결을 해제하고 이후의 모든 연결 시도를 막는다.
+  shutdown() {
+    this.closed = true;
+    this.disconnect();
   }
 
   // 수동 해제. 자동 재연결과 재시도 타이머를 모두 끈다.
@@ -123,6 +131,7 @@ export class TslBle {
   // 저장된 기기 자동 연결 (설계 4.3). 반환: 'disabled' | 'no-device' | 'unavailable' | 'not-found'
   // | 'connected' | 'searching' | 'failed' | 'blocked'
   async autoConnect() {
+    if (this.closed) return 'disabled';
     if (this.state === 'connected' || this.state === 'connecting' || this.state === 'searching') {
       return this.state;
     }
@@ -186,6 +195,7 @@ export class TslBle {
   }
 
   scheduleRetry() {
+    if (this.closed) return;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
@@ -199,6 +209,7 @@ export class TslBle {
 
   // gatt 연결 + 특성 구독 + 시작 시퀀스 (설계 4.2)
   async attach(device) {
+    if (this.closed) return;
     this.device = device;
     if (!this.hooked.has(device)) {
       device.addEventListener('gattserverdisconnected', this.onGattDisconnected);
@@ -306,7 +317,7 @@ export class TslBle {
 
   async tryReconnect() {
     this.reconnectTimer = null;
-    if (this.manual || !this.device) return;
+    if (this.manual || this.closed || !this.device) return;
     try {
       await this.attach(this.device);
     } catch (e) {

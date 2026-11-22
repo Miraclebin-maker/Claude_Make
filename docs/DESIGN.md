@@ -373,6 +373,7 @@ Capacitor/APK 빌드, 차량 쓰기 기능 일체, 새 데이터 필드 파싱, 
   - install: `cache.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))`
   - fetch(같은 출처 GET): `fetch(req, { cache: 'no-cache' })` (서버 재검증) → 성공 시 캐시 갱신, 실패(오프라인) 시 캐시.
 - `main.js`: 서비스워커 `controllerchange` 시 1회 `location.reload()` (새 워커가 제어권을 가져가면 새 파일로 다시 로드). 무한 새로고침 방지 플래그.
+  - (보충 규칙) 주행 중(BLE connected/reconnecting)이거나 데모 중에는 재로드하지 않고, 토스트 "새 버전이 준비되었습니다 · 설정 › 앱에서 새로고침"을 1회만 띄운다. 판단은 `js/update-policy.js`의 `controllerChangeAction`(단위 테스트 `tests/update-policy.test.mjs`).
 - 설정 시트 맨 아래에 현재 버전 표시: "버전 2.1.0".
 
 ### 15.2 새로고침(캐시 삭제) 버튼

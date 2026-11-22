@@ -1,5 +1,7 @@
-// 앱 셸 캐시. 네트워크 우선, 실패 시 캐시 (오프라인 실행).
-const CACHE = 'tsl-shell-v2';
+// 앱 셸 캐시. 네트워크 우선(서버 재검증), 실패 시 캐시 (오프라인 실행).
+// 버전은 js/version.js 의 APP_VERSION 과 같아야 한다 (tests/version.test.mjs 가 검사).
+// 배포 호스트(GitHub Pages)는 max-age=600 을 보내므로, 브라우저 HTTP 캐시를 피해 받는다.
+const CACHE = 'tsl-shell-2.1.0';
 const SHELL = [
   './',
   './index.html',
@@ -18,10 +20,16 @@ const SHELL = [
   './js/audio/ev.js',
   './js/audio/ev-params.js',
   './js/gauge.js',
+  './js/version.js',
+  './js/update-policy.js',
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -38,7 +46,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   event.respondWith(
-    fetch(req)
+    fetch(req, { cache: 'no-cache' })
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();

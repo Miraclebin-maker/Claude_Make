@@ -257,6 +257,10 @@ async function main() {
 
   const leftovers = staticLeftovers();
   check('정적: app/ 에 v1 잔재(워클릿·RPM·v8/gt6·삭제 테마) 없음', leftovers.length === 0, leftovers.join(', ') || 'none');
+  const swText = readFileSync(join(appDir, 'sw.js'), 'utf8');
+  check("정적: sw.js 에 cache: 'no-cache' 와 cache: 'reload'", swText.includes("cache: 'no-cache'") && swText.includes("cache: 'reload'"));
+  const idxText = readFileSync(join(appDir, 'index.html'), 'utf8');
+  check('정적: 카메라 DB 안내 문구 교체 (CSV 파일: 한 줄에 …)', idxText.includes('CSV 파일: 한 줄에 위도,경도,제한속도'));
 
   let browser;
   try {
@@ -376,17 +380,81 @@ async function main() {
         check(`${tag} 콘솔 에러 0`, errors.length === 0, errors.slice(0, 3).join(' | '));
       }
 
-      // 음원: 신규 2종과 기존 2종을 바꿔 가며 재생 경로 실행 (오류 없어야 함)
+      // 음원 5종: 클릭 -> 저장값 -> 선택 표시가 모두 반영되는지 (실기기 보고 대응)
       await page.click('.dock [data-act="settings"]');
-      for (const key of ['motor', 'turbine', 'zimmer', 'plaid']) {
+      for (const key of ['motor', 'turbine', 'zimmer', 'plaid', 'off']) {
         await page.click(`#sheet-settings button[data-sound="${key}"]`);
         await page.waitForTimeout(250);
+        const st = await page.evaluate((k) => ({
+          saved: localStorage.getItem('tsl_sound_profile'),
+          on: document.querySelector(`#sheet-settings button[data-sound="${k}"]`).classList.contains('on'),
+          audio: document.documentElement.dataset.audio || '',
+        }), key);
+        check(`${vpTag} 음원 ${key}: 저장값과 선택 표시 반영`, st.saved === key && st.on, `saved=${st.saved} on=${st.on}`);
+        if (key !== 'off') check(`${vpTag} 음원 ${key}: 오디오 상태 error 아님`, st.audio !== 'error', `audio=${st.audio}`);
       }
-      await page.click('#sheet-settings button[data-sound="off"]');
-      await page.click('#sheet-settings .x');
+
+      // §15.1/15.2/15.3: 설정 시트 "앱" 섹션 — 버전, 새로고침, 종료 버튼이 보이고 다른 버튼과 겹치지 않는다
+      const appBtn = page.locator('[data-act="refresh-app"]');
+      await appBtn.scrollIntoViewIfNeeded();
+      const appLayout = await page.evaluate(() => {
+        const r = (el) => { const b = el.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; };
+        const hit = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+        const refresh = r(document.querySelector('[data-act="refresh-app"]'));
+        const quit = r(document.querySelector('[data-act="quit"]'));
+        const sheet = r(document.getElementById('sheet-settings'));
+        const others = [...document.querySelectorAll('#sheet-settings button')]
+          .filter((b) => !b.matches('[data-act="refresh-app"], [data-act="quit"]'))
+          .map((b) => ({ id: b.dataset.act || b.dataset.sound || b.dataset.theme || b.id || b.textContent.trim(), box: r(b) }))
+          .filter((o) => o.box.r > o.box.l && o.box.b > o.box.t);
+        const hits = others.filter((o) => hit(refresh, o.box) || hit(quit, o.box)).map((o) => o.id);
+        return {
+          version: document.getElementById('app-version').textContent,
+          refreshIn: refresh.l >= 0 && refresh.r <= innerWidth && refresh.t >= sheet.t && refresh.b <= sheet.b + 1,
+          quitIn: quit.l >= 0 && quit.r <= innerWidth && quit.t >= sheet.t && quit.b <= sheet.b + 1,
+          sameRowHit: hit(refresh, quit),
+          hits,
+        };
+      });
+      check(`${vpTag} 설정: 버전 표시 2.1.0`, appLayout.version === '2.1.0', appLayout.version);
+      check(`${vpTag} 설정: 새로고침·종료 버튼이 시트 안에 보임`, appLayout.refreshIn && appLayout.quitIn,
+        `refresh ${appLayout.refreshIn} quit ${appLayout.quitIn}`);
+      check(`${vpTag} 설정: 새로고침·종료 버튼이 서로·다른 버튼과 겹치지 않음`, !appLayout.sameRowHit && appLayout.hits.length === 0,
+        appLayout.hits.join(', ') || 'none');
+
       if (vp.w === 390 && vp.h === 844) {
-        check('음원 전환(motor/turbine/zimmer/plaid) 중 상태 error 아님',
-          (await page.evaluate(() => document.documentElement.dataset.audio || '')) !== 'error', 'audio status');
+        // §15.2 새로고침: 설정(localStorage) 유지, 이전 캐시 삭제, 다시 로드
+        await page.click('#sheet-settings button[data-sound="motor"]');
+        await page.waitForTimeout(200);
+        const loaded = page.waitForEvent('load', { timeout: 20000 });
+        await page.locator('[data-act="refresh-app"]').click();
+        await loaded;
+        await page.waitForSelector('#val-speed');
+        const after = await page.evaluate(async () => ({
+          saved: localStorage.getItem('tsl_sound_profile'),
+          keys: await caches.keys(),
+        }));
+        check('새로고침: 설정 유지 (사운드 motor 저장값)', after.saved === 'motor', `saved=${after.saved}`);
+        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.1.0'),
+          after.keys.join(', ') || 'none');
+
+        // §15.3 종료: 모든 기능 정지, 오버레이 표시, 다시 시작으로 정상 복귀
+        await page.click('.dock [data-act="settings"]');
+        await page.locator('[data-act="quit"]').click();
+        await page.waitForFunction(() => !document.getElementById('quit-overlay').hidden, null, { timeout: 5000 });
+        const q = await page.evaluate(() => ({
+          audio: document.documentElement.dataset.audio || '',
+          demo: document.getElementById('btn-demo').textContent,
+          title: document.querySelector('#quit-overlay h2').textContent,
+        }));
+        check('종료: 오버레이 표시, 오디오 컨텍스트 closed', q.audio === 'closed' && q.title === '종료되었습니다', `audio=${q.audio}`);
+        check('종료: 데모 중지 상태', q.demo === '데모 시작', `demo button="${q.demo}"`);
+        const restarted = page.waitForEvent('load', { timeout: 20000 });
+        await page.locator('#quit-overlay [data-act="restart"]').click();
+        await restarted;
+        await page.waitForSelector('#val-speed');
+        const back = await page.evaluate(() => document.getElementById('quit-overlay').hidden);
+        check('다시 시작: 오버레이 닫히고 앱 정상 로드', back === true, `hidden=${back}`);
       }
       check(`뷰포트 ${vpTag} 전체 콘솔 에러 0`, errors.length === 0, errors.slice(0, 3).join(' | '));
       if (externalFailures.length) results.push(`INFO  외부 리소스 로드 실패 ${externalFailures.length}건(샌드박스 네트워크, 무시)`);

@@ -71,6 +71,7 @@ export function createCameraWatch({ onAlert, onClear, onChime, onGps, onChange, 
   let enabled = settings.isCamEnabled();
   let radius = settings.getCamRadius();
   let watchId = null;
+  let closed = false; // stop() 이후 true
   let lastFix = null; // { lat, lng, heading }
   let tracked = null; // { id, lastDist }
 
@@ -134,7 +135,17 @@ export function createCameraWatch({ onAlert, onClear, onChime, onGps, onChange, 
     onGps(text);
   }
 
+  // 앱 종료: GPS 감시를 끄고 다시 켜지 않는다.
+  function stop() {
+    closed = true;
+    if (watchId !== null && 'geolocation' in navigator) navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    setGps('정지');
+    clear();
+  }
+
   function start() {
+    if (closed) return;
     if (!('geolocation' in navigator)) {
       setGps('미지원');
       return;
@@ -217,6 +228,7 @@ export function createCameraWatch({ onAlert, onClear, onChime, onGps, onChange, 
 
   return {
     start,
+    stop,
     evaluate,
     simulate,
     setEnabled,

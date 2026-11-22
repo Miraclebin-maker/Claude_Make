@@ -17,6 +17,7 @@ export function createAudio() {
   let previewing = false;
   let previewStep = 0;
   let lastTickMs = 0;
+  let closed = false; // close() 이후 true: 어떤 재생도 다시 시작하지 않는다
 
   const volumeGain = () => (volume / 100) * 0.8;
 
@@ -25,6 +26,7 @@ export function createAudio() {
   }
 
   async function ensureContext() {
+    if (closed) throw new Error('audio closed');
     if (!readyPromise) {
       readyPromise = (async () => {
         const AC = window.AudioContext || window.webkitAudioContext;
@@ -60,6 +62,7 @@ export function createAudio() {
   }
 
   async function setProfile(key) {
+    if (closed) return;
     if (!SOUND_PROFILES.includes(key)) return;
     profile = key;
     settings.setSound(key);
@@ -139,11 +142,28 @@ export function createAudio() {
     setChime,
     playChime,
     get profile() { return profile; },
+    // 앱 종료: 노드를 멈추고 컨텍스트를 닫는다. 이후 재생은 모두 무시된다.
+    async close() {
+      closed = true;
+      previewing = false;
+      stopEv();
+      profile = 'off';
+      const c = ctx;
+      ctx = null;
+      master = null;
+      bus = null;
+      readyPromise = null;
+      setStatus('closed');
+      if (c) {
+        try { await c.close(); } catch (e) { /* 이미 닫힘 */ }
+      }
+    },
     get volume() { return volume; },
     get chimeOn() { return chimeOn; },
     // 사용자 활성화 이벤트(click 등)마다 호출. 컨텍스트가 없으면 저장된 프로필로 만들고,
     // suspended 이면 재개를 시도한다.
     unlock() {
+      if (closed) return;
       if (ctx) {
         if (ctx.state === 'suspended') ctx.resume().catch(() => {});
         return;
