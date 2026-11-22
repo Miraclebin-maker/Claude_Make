@@ -104,9 +104,15 @@ async function main() {
         await page.click('.dock [data-act="settings"]');
         await page.click(`#sheet-settings button[data-theme="${theme}"]`);
         await page.click('#sheet-settings .x');
-        // 속도가 3자리(>=100)가 된 시점에서 측정
-        await page.waitForFunction(() => Number(document.getElementById('val-speed').textContent) >= 100, null, { timeout: 15000 });
-        await page.waitForTimeout(250);
+        // 속도가 3자리(>=100)이고 카메라 배너가 떠 있는 시점에서 측정 (데모 45~72틱, §13.4)
+        // 핸들 경고(cycle 55~68)가 떠 있는 동안 측정 (§13.6). 카메라 배너(45~72)도 함께 떠 있다.
+        await page.waitForFunction(
+          () => !document.getElementById('cam-banner').hidden && !document.getElementById('hands-alert').hidden
+            && Number(document.getElementById('val-speed').textContent) >= 100,
+          null, { timeout: 25000, polling: 50 });
+        await page.waitForTimeout(150);
+        // 경고 창(1.3초)이 닫히기 전에 찍는다. 측정은 같은 순간의 상태다.
+        await page.screenshot({ path: join(screensDir, `${theme}-${vp.w}x${vp.h}.png`) });
 
         const m = await page.evaluate(() => {
           const box = (r) => ({ l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height });
@@ -147,8 +153,69 @@ async function main() {
           for (const t of turns) for (const r of track) {
             if (t.l < r.r && r.l < t.r && t.t < r.b && r.t < t.b) turnHits.push(`${t.name}x${r.name}`);
           }
+          // §13.4 (a) 링 외곽 원 vs 상태줄/출력 바 (원 중심 = 회전 중심, 반지름 = 외곽 129/280 * 레이아웃 폭)
+          const dialEl = document.getElementById('dial');
+          let dialHits = null;
+          if (dialEl && parseFloat(getComputedStyle(dialEl).width) > 0) {
+            const dr = dialEl.getBoundingClientRect();
+            const cx = (dr.left + dr.right) / 2;
+            const cy = (dr.top + dr.bottom) / 2;
+            // SVG 요소는 offsetWidth 가 없다. 계산 스타일 폭(회전 전 레이아웃 폭)을 쓴다.
+            const layoutW = parseFloat(getComputedStyle(dialEl).width);
+            const R = (layoutW * 129) / 280;
+            const circleHits = (rect) => {
+              const dx = Math.max(rect.l - cx, 0, cx - rect.r);
+              const dy = Math.max(rect.t - cy, 0, cy - rect.b);
+              return Math.hypot(dx, dy) < R + 8;
+            };
+            dialHits = [];
+            for (const q of ['.status', '.bar']) {
+              const el = document.querySelector(q);
+              if (el && circleHits(box(el.getBoundingClientRect()))) dialHits.push(q);
+            }
+          }
+          // §13.4 (b)(c) 카메라 배너: 제목 줄 높이, 화면 안, 트랙 SHIFT/PK(행 1) 및 LONG-G 비교차
+          const cb = document.getElementById('cam-banner');
+          const cbBox = box(cb.getBoundingClientRect());
+          const titleEl = cb.querySelector('.cam-title');
+          const cs = getComputedStyle(titleEl);
+          const lineH = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
+          const titleH = titleEl.getBoundingClientRect().height;
+          const overlapsBanner = (el) => {
+            const r = box(el.getBoundingClientRect());
+            return r.w > 0 && r.h > 0 && cbBox.l < r.r && r.l < cbBox.r && cbBox.t < r.b && r.t < cbBox.b;
+          };
+          const camTop = [...document.querySelectorAll('#track .track-top > *')].filter(overlapsBanner).map((e) => e.className || e.id);
+          const camBottom = [...document.querySelectorAll('#track .track-bottom > *')].filter(overlapsBanner).map((e) => e.className || e.id);
+          // §13.6 핸들 경고: 한 줄, 화면 안, 보이는 kW 블록/트랙 내부 요소/카메라 배너/독 버튼과 비교차
+          const ha = document.getElementById('hands-alert');
+          const haBox = box(ha.getBoundingClientRect());
+          const haCs = getComputedStyle(ha);
+          const haLineH = parseFloat(haCs.lineHeight) || parseFloat(haCs.fontSize) * 1.2;
+          const haPad = parseFloat(haCs.paddingTop) + parseFloat(haCs.paddingBottom)
+            + parseFloat(haCs.borderTopWidth) + parseFloat(haCs.borderBottomWidth);
+          const haContentH = haBox.h - haPad;
+          const haHitsRect = (r) => r.w > 0 && r.h > 0 && haBox.l < r.r && r.l < haBox.r && haBox.t < r.b && r.t < haBox.b;
+          const haItems = [];
+          const kwEl = document.getElementById('kw-block');
+          const kwHidden = getComputedStyle(kwEl).visibility === 'hidden';
+          if (!kwHidden) haItems.push(['#kw-block', box(kwEl.getBoundingClientRect())]);
+          document.querySelectorAll('#track .track-top > *, #track .vbar-group, #track .track-bottom > *')
+            .forEach((e) => haItems.push([`track ${e.className || e.id}`, box(e.getBoundingClientRect())]));
+          const cbEl = document.getElementById('cam-banner');
+          if (!cbEl.hidden) haItems.push(['#cam-banner', box(cbEl.getBoundingClientRect())]);
+          document.querySelectorAll('.dock button').forEach((e, i) => haItems.push([`dock button ${i}`, box(e.getBoundingClientRect())]));
+          const haHits = haItems.filter(([, r]) => haHitsRect(r)).map(([n]) => n);
           return {
             turnHits,
+            dialHits,
+            hands: {
+              box: haBox, lineH: haLineH, contentH: haContentH, kwHidden, hits: haHits,
+            },
+            cam: {
+              box: cbBox, lineH, titleH, camTop, camBottom,
+              visible: !cb.hidden,
+            },
             speed,
             speedText: speedEl.textContent,
             theme: document.documentElement.dataset.theme,
@@ -169,8 +236,34 @@ async function main() {
         if (vp.w === 390 && vp.h === 844 && theme === 'minimal') {
           check(`${tag} 3자리 속도 폭 >= 250px`, s.w >= 250, `width ${Math.round(s.w)}px`);
         }
+        // §13.4 (a) 링 게이지: 링(선 두께 포함)이 상태줄·출력 바와 8px 이상 떨어짐
+        if (theme === 'dial') {
+          check(`${tag} 링 외곽 vs 상태줄/출력 바 (8px 여백)`, m.dialHits !== null && m.dialHits.length === 0,
+            m.dialHits === null ? 'dial 미표시' : (m.dialHits.join(', ') || 'none'));
+        }
+        // §13.4 (b) 카메라 배너 제목은 한 줄, 배너는 화면 안
+        check(`${tag} 카메라 배너 제목 1줄`, m.cam.titleH <= m.cam.lineH * 1.3,
+          `titleH ${Math.round(m.cam.titleH)}px / lineH ${Math.round(m.cam.lineH)}px`);
+        const cbIn = m.cam.box.l >= 0 && m.cam.box.t >= 0 && m.cam.box.r <= m.innerW && m.cam.box.b <= m.innerH;
+        check(`${tag} 카메라 배너 화면 안`, cbIn,
+          `box ${Math.round(m.cam.box.l)},${Math.round(m.cam.box.t)}-${Math.round(m.cam.box.r)},${Math.round(m.cam.box.b)}`);
+        // §13.6 핸들 경고: 한 줄, 화면 안, 비교차. 세로에서는 kW 블록이 숨겨져 있어야 한다.
+        check(`${tag} 핸들 경고 한 줄`, m.hands.contentH <= m.hands.lineH * 1.3,
+          `contentH ${Math.round(m.hands.contentH)}px / lineH ${Math.round(m.hands.lineH)}px`);
+        const hb = m.hands.box;
+        check(`${tag} 핸들 경고 화면 안`, hb.l >= 0 && hb.t >= 0 && hb.r <= m.innerW && hb.b <= m.innerH,
+          `box ${Math.round(hb.l)},${Math.round(hb.t)}-${Math.round(hb.r)},${Math.round(hb.b)}`);
+        check(`${tag} 핸들 경고 vs kW/트랙 내부/카메라 배너/독 버튼 비교차`, m.hands.hits.length === 0,
+          m.hands.hits.join(', ') || 'none');
+        if (vp.h > vp.w) {
+          check(`${tag} 세로: 핸들 경고 중 kW 블록 숨김`, m.hands.kwHidden, m.hands.kwHidden ? 'hidden' : 'visible');
+        }
+        // §13.4 (c) 트랙: 카메라 배너 vs SHIFT/PK (LONG-G 는 추가 확인)
+        if (theme === 'track') {
+          check(`${tag} 카메라 배너 vs SHIFT/PK 비교차`, m.cam.camTop.length === 0, m.cam.camTop.join(', ') || 'none');
+          check(`${tag} 카메라 배너 vs LONG-G 비교차`, m.cam.camBottom.length === 0, m.cam.camBottom.join(', ') || 'none');
+        }
         check(`${tag} 콘솔 에러 0`, errors.length === 0, errors.slice(0, 3).join(' | '));
-        await page.screenshot({ path: join(screensDir, `${theme}-${vp.w}x${vp.h}.png`) });
       }
 
       if (vp.w === 390 && vp.h === 844) {
