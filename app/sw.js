@@ -1,5 +1,5 @@
 // 앱 셸 캐시. 네트워크 우선, 실패 시 캐시 (오프라인 실행).
-const CACHE = 'tsl-shell-v1';
+const CACHE = 'tsl-shell-v2';
 const SHELL = [
   './',
   './index.html',
@@ -16,8 +16,8 @@ const SHELL = [
   './js/plaid.js',
   './js/audio/audio.js',
   './js/audio/ev.js',
-  './js/audio/rpm-model.js',
-  './js/audio/engine-worklet.js',
+  './js/audio/ev-params.js',
+  './js/gauge.js',
 ];
 
 self.addEventListener('install', (event) => {

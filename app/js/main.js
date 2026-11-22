@@ -9,12 +9,14 @@ import { createDemo, DEMO_HV } from './demo.js';
 import { createPlaid } from './plaid.js';
 
 const SOUND_LABEL = {
-  off: '배기음·테마',
+  off: '음소거',
   zimmer: '한스짐머 EV',
   plaid: '플래드 워프',
-  v8: 'V8 머슬카',
-  gt6: 'GT 슈퍼카',
+  motor: '일렉트릭 슈퍼카',
+  turbine: '제트 터빈',
 };
+
+const THEMES = ['minimal', 'plaid', 'arc', 'twin', 'hud'];
 
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 
@@ -39,7 +41,8 @@ const state = {
   cam: { enabled: settings.isCamEnabled(), radius: settings.getCamRadius(), gps: '대기', count: 0, banner: null },
   plaidHyper: false,
   sheet: null,
-  latest: { speed: 0, pedal: 0 },
+  latest: { speed: 0, pedal: 0, kw: 0 },
+  fullscreen: false,
 };
 
 const ui = createUi();
@@ -89,7 +92,7 @@ ble.onState((st, name) => {
     ui.toast('연결 끊김 · 재연결 중');
   }
   if (st !== 'connected' && prev === 'connected') {
-    state.latest = { speed: 0, pedal: 0 };
+    state.latest = { speed: 0, pedal: 0, kw: 0 };
   }
   schedule();
   syncWakeLock();
@@ -156,7 +159,7 @@ function onFrame(f) {
   state.plaidHyper = hyper;
 
   state.telem = { ...f, totalKw };
-  state.latest = { speed: f.speed, pedal: f.pedal };
+  state.latest = { speed: f.speed, pedal: f.pedal, kw: totalKw };
   schedule();
 }
 
@@ -191,7 +194,7 @@ function stopDemo(notify = true) {
   clearInterval(demoTimer);
   demoTimer = null;
   state.demo = false;
-  state.latest = { speed: 0, pedal: 0 };
+  state.latest = { speed: 0, pedal: 0, kw: 0 };
   state.hv = null;
   cam.simulate(null);
   lastCamSim = null;
@@ -252,7 +255,9 @@ function setSound(key) {
 }
 
 function setTheme(t) {
-  state.theme = t;
+  // 알 수 없는 값(삭제된 테마 포함)은 미니멀로
+  state.theme = THEMES.includes(t) ? t : 'minimal';
+  t = state.theme;
   if (t === 'plaid') plaid.start();
   else plaid.stop();
   ui.toast(`테마 변경: ${themeName(t)}`);
@@ -341,7 +346,25 @@ const ACTIONS = {
   demo: () => toggleDemo(),
   zero: () => toggleZero(),
   'trip-reset': () => resetTrip(),
+  fullscreen: () => toggleFullscreen(),
 };
+
+// 전체화면 토글 (§14.3). 실패하면 토스트. 상태는 fullscreenchange 로 동기화.
+function toggleFullscreen() {
+  const req = document.fullscreenElement
+    ? document.exitFullscreen()
+    : document.documentElement.requestFullscreen();
+  Promise.resolve(req).catch(() => ui.toast('이 브라우저는 전체화면을 지원하지 않습니다'));
+}
+
+document.addEventListener('fullscreenchange', () => {
+  state.fullscreen = !!document.fullscreenElement;
+  schedule();
+});
+if (!document.fullscreenEnabled) {
+  const fsBtn = document.getElementById('btn-fs');
+  if (fsBtn) fsBtn.hidden = true;
+}
 
 document.addEventListener('click', (e) => {
   if (!(e.target instanceof Element)) return;
@@ -410,7 +433,7 @@ document.addEventListener('visibilitychange', () => {
 
 // ---- 주기 작업 ----------------------------------------------------------
 // 가상 RPM / 사운드는 60Hz
-setInterval(() => audio.tick(state.latest.speed, state.latest.pedal), 1000 / 60);
+setInterval(() => audio.tick(state.latest.speed, state.latest.pedal, state.latest.kw, Math.max(200, state.trip.maxKw)), 1000 / 60);
 
 async function boot() {
   cam.start();

@@ -56,10 +56,10 @@ app/
   js/demo.js             데모 데이터
   js/plaid.js            플래드 워프 캔버스
   js/audio/audio.js      AudioContext, 프로필 전환, 볼륨, 경고음
-  js/audio/ev.js         EV 사운드 (zimmer, plaid)
-  js/audio/rpm-model.js  가상 RPM/기어 모델, ICE_PROFILES (내연기관 튜닝 상수)
-  js/audio/engine-worklet.js  내연기관 합성 AudioWorklet
-tests/                   protocol / rpm-model 단위 테스트, smoke 스모크
+  js/audio/ev.js         주행 사운드 (zimmer, plaid, motor, turbine)
+  js/audio/ev-params.js  motor/turbine 파라미터 계산 (순수 함수)
+  js/gauge.js            신규 테마(arc, twin, hud) SVG 게이지
+tests/                   protocol / ev-params 단위 테스트, smoke 스모크
 ```
 
 ## 읽기 전용 원칙

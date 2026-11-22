@@ -18,23 +18,6 @@
   color-scheme: dark;
 }
 
-/* 나이트: 배경 순흑, 모든 색을 앰버 단색, 전체 밝기 약 60% (야간 눈부심 감소) */
-html[data-theme="night"] {
-  --bg: #000000;
-  --surface: #0A0700;
-  --surface-2: #120D02;
-  --line: #5A3D12;
-  --text: #FFB347;
-  --text-2: #D99A45;
-  --text-3: #B07A32;
-  --accent: #FFB347;
-  --regen: #FFB347;
-  --power: #FFB347;
-  --warn: #FFB347;
-  --danger: #FFB347;
-  --info: #FFB347;
-}
-
 *, *::before, *::after { box-sizing: border-box; }
 
 html, body {
@@ -68,8 +51,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
   overflow: hidden;
   z-index: 1;
 }
-
-html[data-theme="night"] .app { filter: brightness(0.6); }
 
 /* ---- 플래드 캔버스 ----------------------------------------------------- */
 .plaid-canvas {
@@ -301,143 +282,60 @@ html[data-theme="plaid"] .plaid-canvas { opacity: 1; }
 .speed-meta b { color: var(--accent); font-weight: 700; }
 .speed-meta .sep { width: 4px; height: 4px; border-radius: 50%; background: var(--text-3); }
 
-/* 트랙 (track) 세로: 제한속도와 kW 를 중앙 영역 밖(모서리)으로 빼서 프레임이 세로 전체를 쓰게 한다 */
+/* 세로 + 신규 테마(arc, twin, hud): 핸들 경고가 떠 있는 동안 kW 블록은 숨긴다(자리 유지). */
 @media (orientation: portrait) {
-  html[data-theme="track"] .limit { position: absolute; top: 0; left: 0; z-index: 2; }
-  html[data-theme="track"] .kw-block {
-    position: absolute;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 2;
-  }
-  html[data-theme="track"] .center { grid-row: 1 / span 3; align-self: stretch; }
-  html[data-theme="track"] .track { padding: 8px 12px 56px; transition: top 0.2s; }
-  /* 카메라 배너가 떠 있을 때만 프레임을 배너 아래로 내린다. 배너는 프레임 바깥 빈 띠에 있다.
-     속도 숫자 위치는 그대로 두어 배너 표시/숨김 때 숫자가 움직이지 않게 한다. */
-  html[data-theme="track"] .cam-banner {
-    left: 50%;
-    top: 6px;
-    transform: translateX(calc(-50% + 36px));
-  }
-  html[data-theme="track"] .cluster:has(> #cam-banner:not([hidden])) .track { top: 60px; }
-  /* 세로: 핸들 경고가 떠 있는 동안 kW 블록은 숨긴다(자리는 유지). */
   .cluster:has(> #hands-alert:not([hidden])) .kw-block { visibility: hidden; }
-  html[data-theme="track"] .track-top { padding-left: 60px; }
-  html[data-theme="track"] .speed { font-size: min(28vw, 22dvh); }
-  /* THR/REG 세로바는 숫자 아래 가로 줄로 옮겨 방향지시등 열과 겹치지 않게 한다 */
-  html[data-theme="track"] .track-mid {
-    flex: none;
-    height: 96px;
-    margin: auto 0 8px;
-    justify-content: center;
-    gap: 48px;
-  }
 }
 
-/* 트랙 가로: 프레임이 클러스터 높이를 쓰고 LED 줄/G미터 줄은 가장자리에 붙여 숫자와 세로로 겹치지 않게 한다 */
-@media (orientation: landscape) {
-  html[data-theme="track"] .center { align-self: stretch; }
-  html[data-theme="track"] .track { padding: 8px 12px 56px; }
-  html[data-theme="track"] .speed { font-size: min(12.5vw, 32dvh); }
-  html[data-theme="track"] .speed-wrap { margin-bottom: 24px; }
-  /* 방향지시등 열을 트랙 프레임 바깥(좌우 40px)으로 빼서 세로바와 겹치지 않게 한다 */
-  html[data-theme="track"] .center-row {
-    width: calc(100% + 80px);
-    margin: 0 -40px;
-    grid-template-columns: 40px minmax(0, 1fr) 40px;
-  }
-}
-
-/* 링 게이지 (dial) */
-.dial {
-  display: none;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: min(74vw, 58dvh);
-  height: min(74vw, 58dvh);
-  transform: translate(-50%, -50%) rotate(135deg);
-  pointer-events: none;
-}
-html[data-theme="dial"] .dial { display: block; }
-html[data-theme="dial"] .speed { font-size: min(20vw, 26dvh); }
-
-/* 트랙 (track) */
-.track {
-  display: none;
+/* ---- 신규 테마 (arc, twin, hud): 클러스터 영역 전체를 SVG 한 장으로 그린다 (gauge.js) ---- */
+.fx {
   position: absolute;
   inset: 0;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  background: rgba(22, 24, 28, 0.6);
-  padding: 8px 12px;
-  flex-direction: column;
-  justify-content: space-between;
+  width: 100%;
+  height: 100%;
+  display: none;
   pointer-events: none;
+  z-index: 0;
 }
-html[data-theme="track"] .track { display: flex; }
-.track-top, .track-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+html:is([data-theme="arc"], [data-theme="twin"], [data-theme="hud"]) .fx { display: block; }
+html:is([data-theme="arc"], [data-theme="twin"], [data-theme="hud"]) .center,
+html:is([data-theme="arc"], [data-theme="twin"], [data-theme="hud"]) #limit,
+html:is([data-theme="arc"], [data-theme="twin"], [data-theme="hud"]) .kw-block { display: none; }
+html[data-theme="hud"] { --bg: #000000; }
+html[data-theme="hud"] .status,
+html[data-theme="hud"] .bar { visibility: hidden; }
+html[data-theme="hud"] .dock { opacity: 0.4; }
+
+.fx text {
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+  fill: var(--text);
 }
-.track-label { font-size: 14px; font-weight: 700; letter-spacing: 0.08em; color: var(--text-2); }
-.leds {
-  flex: 1;
-  max-width: 200px;
-  display: grid;
-  grid-template-columns: repeat(10, 1fr);
-  gap: 4px;
-  height: 8px;
-}
-.leds span { border-radius: 2px; background: var(--surface-2); }
-.leds .led.g { background: var(--regen); }
-.leds .led.a { background: var(--accent); }
-.leds .led.r { background: var(--danger); }
-.track-peak { font-size: 14px; font-weight: 700; color: var(--accent); }
-.track-mid {
-  flex: 1;
-  margin: 6px 0;
-  display: flex;
-  justify-content: space-between;
-  align-items: stretch;
-}
-.vbar-group { display: flex; align-items: stretch; gap: 6px; }
-.vbar {
-  width: 10px;
-  background: var(--surface-2);
-  border-radius: 2px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-}
-.vbar-fill { width: 100%; height: 0; transition: height 0.1s; }
-.vbar-fill.thr { background: var(--accent); }
-.vbar-fill.regen { background: var(--regen); }
-.vbar-txt { display: flex; flex-direction: column; justify-content: space-between; font-size: 14px; color: var(--text-2); }
-.vbar-txt b { color: var(--text); font-weight: 700; }
-.vbar-txt.right { text-align: right; }
-.vbar-group.right { flex-direction: row; }
-.track-bottom .track-label { font-size: 14px; }
-.gmeter {
-  flex: 1;
-  max-width: 160px;
-  height: 8px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  background: var(--surface-2);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.g-dec { display: flex; justify-content: flex-end; border-right: 1px solid var(--line); }
-.g-acc { display: flex; justify-content: flex-start; }
-.g-fill { height: 100%; transition: width 0.1s; }
-.g-fill.dec { background: var(--danger); }
-.g-fill.acc { background: var(--info); }
-.track-bottom b { font-size: 14px; min-width: 56px; text-align: right; }
+.fx .spd { font-weight: 700; letter-spacing: -0.02em; }
+.fx .spd.over { fill: var(--danger); }
+.fx .unit, .fx .kwfr { fill: var(--text-2); }
+.fx .kwv { font-weight: 700; }
+.fx .scale-n { fill: var(--text-2); font-weight: 600; }
+.fx .tick { stroke: var(--text-3); stroke-width: 2.5; stroke-linecap: round; }
+.fx .tick.major { stroke: var(--text-2); stroke-width: 4; }
+.fx .arc-bg { fill: none; stroke: var(--surface-2); stroke-width: 14; stroke-linecap: round; }
+.fx .arc-fill { fill: none; stroke-width: 14; stroke-linecap: round; }
+.fx .arc-track { fill: none; stroke: var(--line); stroke-width: 6; }
+.fx .pwr { fill: none; stroke: var(--power); stroke-width: 8; stroke-linecap: round; }
+.fx .rgn { fill: none; stroke: var(--regen); stroke-width: 8; stroke-linecap: round; }
+.fx .ring { fill: none; stroke: var(--line); stroke-width: 6; }
+.fx .zone-rgn { fill: none; stroke: var(--regen); stroke-width: 5; opacity: 0.55; }
+.fx .zone-pwr { fill: none; stroke: var(--power); stroke-width: 5; opacity: 0.55; }
+.fx .hand { stroke: var(--power); stroke-width: 4; stroke-linecap: round; }
+.fx .hub { fill: var(--text-2); }
+.fx .needle { transition: transform 120ms linear; }
+.fx .limit-ring { fill: #F2F3F5; stroke: #DC2626; }
+.fx .limit-k { fill: #DC2626; font-weight: 800; }
+.fx .limit-n { fill: #121316; font-weight: 800; }
+.fx .limit.over { animation: pulse 0.8s ease-in-out infinite; }
+.fx .turn { fill: var(--line); transition: fill 0.15s; }
+.fx .turn.on { fill: var(--regen); animation: blink 0.75s infinite; }
+.fx[data-night="1"] { opacity: 0.6; }
 
 /* 경고 */
 /* 핸들 경고: 세로에서는 kW 블록 자리(하단 중앙), 가로에서는 하단 줄 가운데(ⓘ와 ⚙ 사이). 항상 한 줄. */
@@ -486,7 +384,6 @@ html[data-theme="track"] .track { display: flex; }
   font-weight: 800;
   font-size: 16px;
 }
-html[data-theme="night"] .cam-badge { color: #000; }
 .cam-title { font-size: 16px; font-weight: 700; }
 .cam-dist { color: var(--danger); margin-left: 4px; }
 .cam-sub { font-size: 14px; color: var(--text-2); }
@@ -499,6 +396,16 @@ html[data-theme="night"] .cam-badge { color: #000; }
   padding-bottom: 10px;
   padding-top: 4px;
 }
+/* 전체화면 버튼: 하단 줄 오른쪽, ⚙ 왼쪽 */
+.round.fs {
+  width: 44px;
+  height: 44px;
+  margin-left: auto;
+  margin-right: 8px;
+}
+.round .ic { width: 22px; height: 22px; }
+[hidden].ic { display: none !important; }
+
 .round {
   width: 52px;
   height: 52px;
@@ -650,7 +557,6 @@ html[data-theme="night"] .cam-badge { color: #000; }
   border-color: var(--text);
 }
 .btn.danger { color: var(--danger); }
-html[data-theme="night"] .btn.danger { color: var(--text); }
 
 .row {
   display: flex;
@@ -760,14 +666,6 @@ html[data-theme="night"] .btn.danger { color: var(--text); }
     transform: translate(-50%, -50%);
     margin-top: 30px;
   }
-  html[data-theme="dial"] .speed { font-size: min(18vw, 30dvh); }
-  /* 링 SVG(280 viewBox, 외곽 반지름 129)의 바깥 지름이 클러스터 높이에서 위·아래 8px 여백을 남기도록 지름을 정한다. */
-  .cluster { container-type: size; }
-  .dial {
-    width: min(40vw, calc((100cqh - 16px) * 140 / 129));
-    height: min(40vw, calc((100cqh - 16px) * 140 / 129));
-  }
-  .track { padding: 6px 10px; }
   .sheet {
     top: 0;
     bottom: 0;

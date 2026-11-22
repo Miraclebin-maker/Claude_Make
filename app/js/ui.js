@@ -1,4 +1,5 @@
 // DOM 렌더링. render(state) 가 화면 전체를 상태에서 그린다. 이벤트 바인딩은 main.js 가 담당.
+import { createGauge } from './gauge.js';
 
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 const CONN_LABEL = {
@@ -7,7 +8,7 @@ const CONN_LABEL = {
   searching: '기기 찾는 중',
   reconnecting: '재연결 중',
 };
-const THEME_NAMES = { minimal: '미니멀', plaid: '플래드 워프', dial: '링 게이지', track: '트랙 모드', night: '나이트' };
+const THEME_NAMES = { minimal: '미니멀', plaid: '플래드 워프', arc: '퍼포먼스 아크', twin: '트윈 다이얼', hud: 'HUD' };
 
 export function themeName(key) {
   return THEME_NAMES[key] || key;
@@ -16,6 +17,7 @@ export function themeName(key) {
 export function createUi() {
   const nodes = new Map();
   const last = new Map();
+  let gauge = null;
 
   function node(id) {
     let n = nodes.get(id);
@@ -63,6 +65,12 @@ export function createUi() {
     show('hint', s.hint && !s.demo);
   }
 
+  // 신규 테마용 SVG 게이지 (lazy: DOM 준비 뒤 한 번)
+  function gaugeOf() {
+    if (!gauge) gauge = createGauge(node('fx'), node('cluster'));
+    return gauge;
+  }
+
   function renderGauge(s) {
     const t = s.telem;
     const speed = t ? t.speed : 0;
@@ -102,34 +110,7 @@ export function createUi() {
       text('cam-dist', `${cb.distM}m`);
     }
 
-    const arc = Math.min(595, Math.round((speed / 260) * 595));
-    const arcNode = node('dial-arc');
-    if (arcNode) arcNode.setAttribute('stroke-dasharray', `${arc} 800`);
-
-    renderTrack(s, speed, kw);
-  }
-
-  function renderTrack(s, speed, kw) {
-    const t = s.telem;
-    const pedal = t ? t.pedal : 0;
-    const load = Math.min(1, Math.max(pedal / 100, Math.max(0, kw) / 260));
-    const lit = Math.round(load * 10);
-    const leds = document.querySelectorAll('#track-leds > span');
-    leds.forEach((el, i) => {
-      let c = 'led off';
-      if (i < lit) c = i < 4 ? 'led g' : (i < 7 ? 'led a' : 'led r');
-      if (el.className !== c) el.className = c;
-    });
-    style('track-thr', 'height', `${pedal}%`);
-    text('track-pedal-txt', `${pedal}%`);
-    const regen = kw < 0 ? -kw : 0;
-    text('track-regen-txt', `${Math.round(regen)}kW`);
-    style('track-regen', 'height', `${clamp((regen / 65) * 100, 0, 100)}%`);
-    text('track-peak', `PK ${Math.round(s.trip.maxKw)}kW`);
-    const g = s.longG;
-    text('track-g-txt', `${g >= 0 ? '+' : ''}${g.toFixed(2)}G`);
-    style('track-g-acc', 'width', `${g >= 0 ? clamp((g / 0.8) * 100, 0, 100) : 0}%`);
-    style('track-g-dec', 'width', `${g < 0 ? clamp((-g / 0.8) * 100, 0, 100) : 0}%`);
+    gaugeOf().update(s);
   }
 
   function renderInfo(s) {
@@ -201,6 +182,8 @@ export function createUi() {
     renderGauge(s);
     renderInfo(s);
     renderSettings(s);
+    show('fs-expand', !s.fullscreen);
+    show('fs-collapse', !!s.fullscreen);
     show('scrim', !!s.sheet);
     show('sheet-info', s.sheet === 'info');
     show('sheet-settings', s.sheet === 'settings');

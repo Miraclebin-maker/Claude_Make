@@ -1,21 +1,17 @@
 // 사운드 컨트롤러: AudioContext, 프로필 전환, 볼륨, 경고음, 가속 미리듣기.
-// 내연기관(v8, gt6)은 engine-worklet 으로, EV(zimmer, plaid)는 ev.js 의 오실레이터로 합성한다.
-import { ICE_PROFILES, createRpmModel, stepRpm } from './rpm-model.js';
+// 모든 주행 사운드는 ev.js 의 Web Audio 노드로 합성한다 (zimmer, plaid, motor, turbine).
 import { startEv } from './ev.js';
 import * as settings from '../settings.js';
 
-export const SOUND_PROFILES = Object.freeze(['off', 'zimmer', 'plaid', 'v8', 'gt6']);
-const WORKLET_URL = new URL('./engine-worklet.js', import.meta.url);
+export const SOUND_PROFILES = Object.freeze(['off', 'zimmer', 'plaid', 'motor', 'turbine']);
 
 export function createAudio() {
   let ctx = null;
   let master = null;
   let bus = null;
-  let engine = null;
   let readyPromise = null;
   let profile = 'off';
   let ev = null;
-  let model = null;
   let volume = settings.getVolume();
   let chimeOn = true;
   let previewing = false;
@@ -44,16 +40,6 @@ export function createAudio() {
         master.gain.value = volumeGain();
         bus.connect(master);
         master.connect(ctx.destination);
-
-        setStatus('loading');
-        await ctx.audioWorklet.addModule(WORKLET_URL);
-        engine = new AudioWorkletNode(ctx, 'tsl-engine', {
-          numberOfInputs: 0,
-          numberOfOutputs: 1,
-          outputChannelCount: [1],
-        });
-        engine.parameters.get('gain').value = 0;
-        engine.connect(bus);
         setStatus('ready');
       })().catch((err) => {
         setStatus('error');
@@ -64,10 +50,6 @@ export function createAudio() {
     await readyPromise;
     // 자동재생 정책으로 suspended 일 수 있다. 제스처 이후 재개를 시도하되 기다리지 않는다.
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-  }
-
-  function setEngineGain(v) {
-    if (engine && ctx) engine.parameters.get('gain').setTargetAtTime(v, ctx.currentTime, 0.05);
   }
 
   function stopEv() {
@@ -82,29 +64,18 @@ export function createAudio() {
     profile = key;
     settings.setSound(key);
     stopEv();
-    model = null;
-    if (key === 'off') {
-      setEngineGain(0);
-      return;
-    }
+    if (key === 'off') return;
     try {
       await ensureContext();
     } catch (err) {
       return;
     }
     if (profile !== key) return; // 기다리는 사이 다른 프로필이 선택됨
-    if (key === 'zimmer' || key === 'plaid') {
-      setEngineGain(0);
-      ev = startEv(key, ctx, bus);
-    } else {
-      model = createRpmModel(ICE_PROFILES[key]);
-      engine.port.postMessage({ type: 'profile', profile: ICE_PROFILES[key] });
-      setEngineGain(1);
-    }
+    ev = startEv(key, ctx, bus);
   }
 
-  // 60Hz 호출. 속도/페달은 telemetry 또는 가속 미리듣기 값.
-  function tick(speedKmh, pedalPct) {
+  // 60Hz 호출. 속도/페달/kW 는 telemetry 또는 가속 미리듣기 값. peakKw 는 kW 정규화 기준.
+  function tick(speedKmh, pedalPct, kw = 0, peakKw = 200) {
     const now = performance.now();
     const dt = lastTickMs ? Math.min(0.1, (now - lastTickMs) / 1000) : 1 / 60;
     lastTickMs = now;
@@ -117,15 +88,7 @@ export function createAudio() {
       pedal = previewStep;
     }
 
-    if (ev) {
-      ev.update(speed, pedal);
-      return;
-    }
-    if (!model || !engine || !ctx) return;
-    const r = stepRpm(model, { speedKmh: speed, pedalPct: pedal, dtSec: dt });
-    engine.parameters.get('rpm').value = r.rpm;
-    engine.parameters.get('throttle').value = r.throttle;
-    if (r.event === 'overrun') engine.port.postMessage({ type: 'overrun' });
+    if (ev) ev.update(speed, pedal, previewing ? 0 : kw, peakKw);
   }
 
   function setPreview(on) {

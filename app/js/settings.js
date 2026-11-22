@@ -12,7 +12,8 @@ const KEY = {
   volume: 'tsl_volume',
 };
 
-const SOUND_KEYS = ['off', 'zimmer', 'plaid', 'v8', 'gt6'];
+// 목록에 없는 저장값(삭제된 음원 키 포함)은 'off' 로 바뀐다 (v2 마이그레이션)
+const SOUND_KEYS = ['off', 'zimmer', 'plaid', 'motor', 'turbine'];
 
 export function read(key, fallback = null) {
   try {
