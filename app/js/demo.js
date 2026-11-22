@@ -50,6 +50,9 @@ export function createDemo() {
       const cam = (cycle >= 45 && cycle <= 72)
         ? { limit: 100, distM: Math.max(20, Math.round((73 - cycle) * 16)) }
         : null;
+      // 사각지대 시연 (§19.5): 좌측은 좌 방향지시등이 켜진 구간과 겹치고, 우측은 따로 한 번 켠다.
+      frame.blindLeft = cycle >= 20 && cycle <= 30;
+      frame.blindRight = cycle >= 60 && cycle <= 66;
       return { frame, cam };
     },
   };

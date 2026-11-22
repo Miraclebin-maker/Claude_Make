@@ -14,9 +14,8 @@
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-  <canvas id="plaid-canvas" class="plaid-canvas" aria-hidden="true"></canvas>
-
   <div id="app" class="app">
+    <canvas id="plaid-canvas" class="plaid-canvas" aria-hidden="true"></canvas>
     <header class="status">
       <button id="btn-conn" class="conn" type="button" data-act="conn">
         <span id="conn-dot" class="dot" data-state="idle"></span>
@@ -79,6 +78,11 @@
 
     <footer class="dock">
       <button type="button" class="round" data-act="info" aria-label="정보">ⓘ</button>
+      <button type="button" id="btn-orient" class="round orient" data-act="orient" aria-label="화면 방향">
+        <svg id="ic-orient-auto" class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <svg id="ic-orient-landscape" class="ic" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="3" y="7" width="18" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+        <svg id="ic-orient-portrait" class="ic" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="7" y="3" width="10" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
       <button type="button" id="btn-fs" class="round fs" data-act="fullscreen" aria-label="전체화면">
         <svg id="fs-expand" class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <svg id="fs-collapse" class="ic" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -86,9 +90,11 @@
       <button type="button" class="round" data-act="settings" aria-label="설정">⚙</button>
     </footer>
 
+    <div id="blind" class="blind" aria-hidden="true">
+      <div class="blind-edge l"></div>
+      <div class="blind-edge r"></div>
+    </div>
     <div id="toast" class="toast" role="status" aria-live="polite"><span id="toast-msg"></span></div>
-  </div>
-
   <div id="scrim" class="scrim" data-act="close" hidden></div>
 
   <div id="quit-overlay" class="quit-overlay" role="alertdialog" aria-live="assertive" hidden>
@@ -218,7 +224,11 @@
         <button type="button" class="btn" data-act="cam-import">JSON/CSV 열기</button>
         <button type="button" class="btn danger" data-act="cam-clear">DB 초기화</button>
       </div>
-      <p class="note">CSV 파일: 한 줄에 위도,경도,제한속도 (예: 37.5665,126.9780,60)<br>JSON 파일도 불러올 수 있습니다.</p>
+      <p class="note">CSV 파일: 한 줄에 위도,경도,제한속도 (예: 37.5665,126.9780,60) (선택: 4번째 열에 단속 방향 각도)<br>JSON 파일도 불러올 수 있습니다.</p>
+      <div class="row wrap">
+        <a id="cam-db-link" class="btn" href="https://www.data.go.kr/data/15028200/standard.do" target="_blank" rel="noopener">공공데이터 카메라 DB 받기</a>
+      </div>
+      <p class="note">열린 페이지에서 JSON 다운로드 → 받은 파일을 'JSON/CSV 열기'로 불러오세요.</p>
 
       <h3>기타</h3>
       <div class="row wrap">
@@ -230,7 +240,7 @@
       <h3>앱</h3>
       <div class="row">
         <span>버전</span>
-        <span id="app-version" class="val">2.3.0</span>
+        <span id="app-version" class="val">2.4.0</span>
       </div>
       <div class="row">
         <span>화면 켜짐 유지</span>
@@ -245,6 +255,8 @@
   </section>
 
   <input id="cam-file" type="file" accept=".json,.csv,text/csv,application/json" hidden>
+
+  </div>
 
   <script type="module" src="js/main.js"></script>
 </body>

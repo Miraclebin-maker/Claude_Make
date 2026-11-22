@@ -50,6 +50,20 @@ button { font: inherit; color: inherit; cursor: pointer; }
   padding-right: max(16px, env(safe-area-inset-right));
   overflow: hidden;
   z-index: 1;
+  /* 가로/세로 판단은 뷰포트가 아니라 앱 루트 크기 기준 (§19.3) */
+  container-type: size;
+  container-name: app;
+}
+
+/* 방향 전환 대체: 회전 잠금이 안 될 때 앱 루트를 90° 돌린다. 레이아웃 박스는 가로/세로가 바뀐 채 화면에 맞춰진다. */
+.app.rot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100dvh;
+  height: 100dvw;
+  transform-origin: 0 0;
+  transform: translateX(100dvw) rotate(90deg);
 }
 
 /* ---- 플래드 캔버스 ----------------------------------------------------- */
@@ -239,13 +253,14 @@ html[data-theme="plaid"] .plaid-canvas { opacity: 1; }
   z-index: 1;
   width: 100%;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  /* 방향지시등 열: 세로 64px, 가로 72px (§19.4) */
+  grid-template-columns: var(--turn-size, 64px) minmax(0, 1fr) var(--turn-size, 64px);
   align-items: center;
 }
 
 .turn {
-  width: 40px;
-  height: 40px;
+  width: var(--turn-size, 64px);
+  height: var(--turn-size, 64px);
   justify-self: center;
   fill: var(--line);
   transition: fill 0.15s;
@@ -261,11 +276,13 @@ html[data-theme="plaid"] .plaid-canvas { opacity: 1; }
   min-width: 0;
 }
 .speed {
-  font-size: min(35vw, 27dvh);
+  /* 속도 숫자는 칸 너비(방향지시등 두 개를 뺀 폭)에 맞춘다 (§19.3: 앱 루트 기준 단위) */
+  /* 세로: 칸 폭은 화면 전체 폭(내용 폭 + 여백 32px)에서 방향지시등 두 개(64px씩)를 뺀 값 */
+  font-size: min(calc((100cqw + 32px) * 0.35), 27cqh, calc((100cqw - 96px) / 1.9));
   line-height: 1;
   font-weight: 700;
   letter-spacing: -0.02em;
-  min-width: 3ch;
+  min-width: 0; /* 칸 너비는 그리드가 정한다. 3ch 최소폭은 칸을 넘쳐 방향지시등 쪽으로 밀었다 (§19.4) */
   text-align: center;
   color: var(--text);
 }
@@ -283,8 +300,15 @@ html[data-theme="plaid"] .plaid-canvas { opacity: 1; }
 .speed-meta .sep { width: 4px; height: 4px; border-radius: 50%; background: var(--text-3); }
 
 /* 세로 + 신규 테마(arc, twin, hud): 핸들 경고가 떠 있는 동안 kW 블록은 숨긴다(자리 유지). */
-@media (orientation: portrait) {
+@container app (aspect-ratio < 1) {
   .cluster:has(> #hands-alert:not([hidden])) .kw-block { visibility: hidden; }
+  /* 세로: 방향지시등 열이 화면 가장자리에 붙도록 여백만큼 넓힌다 (속도 칸 250px 이상 유지, §12.8) */
+  .center-row { width: calc(100% + 32px); margin: 0 -16px; }
+}
+
+/* 가로: 방향지시등 72px (§19.4) */
+@container app (aspect-ratio >= 1) {
+  .center-row { --turn-size: 72px; }
 }
 
 /* ---- 신규 테마 (arc, twin, hud): 클러스터 영역 전체를 SVG 한 장으로 그린다 (gauge.js) ---- */
@@ -397,11 +421,11 @@ html[data-theme="hud"] .dock { opacity: 0.4; }
   padding-top: 4px;
 }
 /* 전체화면 버튼: 하단 줄 오른쪽, ⚙ 왼쪽 */
+.round.orient { width: 44px; height: 44px; margin-left: auto; }
 .round.fs {
   width: 44px;
   height: 44px;
-  margin-left: auto;
-  margin-right: 8px;
+  margin-left: 8px;
 }
 .round .ic { width: 22px; height: 22px; }
 [hidden].ic { display: none !important; }
@@ -428,7 +452,7 @@ html[data-theme="hud"] .dock { opacity: 0.4; }
   left: 50%;
   transform: translate(-50%, -8px);
   z-index: 50;
-  max-width: calc(100vw - 32px);
+  max-width: calc(100cqw - 32px);
   padding: 8px 14px;
   border-radius: 10px;
   background: var(--surface-2);
@@ -457,7 +481,7 @@ html[data-theme="hud"] .dock { opacity: 0.4; }
   right: 0;
   bottom: 0;
   z-index: 30;
-  max-height: 85dvh;
+  max-height: 85cqh;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   background: var(--surface);
@@ -617,7 +641,7 @@ html[data-theme="hud"] .dock { opacity: 0.4; }
 .app.shake { animation: shake 0.3s linear; }
 
 /* ---- 가로 모드 --------------------------------------------------------- */
-@media (orientation: landscape) {
+@container app (aspect-ratio >= 1) {
   .cluster {
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
@@ -635,7 +659,7 @@ html[data-theme="hud"] .dock { opacity: 0.4; }
   .center {
     grid-row: 1;
     grid-column: 2;
-    width: min(56vw, 640px);
+    width: min(56cqw, 640px);
   }
   .kw-block {
     grid-row: 1;
@@ -644,7 +668,7 @@ html[data-theme="hud"] .dock { opacity: 0.4; }
     justify-self: end;
     text-align: right;
   }
-  .speed { font-size: min(20vw, 40dvh); }
+  .speed { font-size: min(20cqw, 40cqh, calc((min(56cqw, 640px) - 144px) / 1.9)); }
   /* 가로: 단속 카메라 배너와 힌트/핸즈 경고는 속도 숫자 바깥 모서리(좌하단/우하단)에 둔다 */
   /* 한 줄 가로 배치(폭은 내용만큼). 좌측 열이 좁은 640x360 에서도 제목이 줄바꿈되지 않게 한다. */
   .cam-banner {
@@ -671,7 +695,7 @@ html[data-theme="hud"] .dock { opacity: 0.4; }
     bottom: 0;
     left: auto;
     right: 0;
-    width: min(420px, 60vw);
+    width: min(420px, 60cqw);
     max-height: none;
     border-radius: 18px 0 0 18px;
     border-top: none;
@@ -684,9 +708,54 @@ html[data-theme="hud"] .dock { opacity: 0.4; }
 }
 
 /* 트윈 가로: 게이지가 가운데로 와서 카메라 배너는 좌상단으로 옮긴다 (§16.1) */
-@media (orientation: landscape) {
+@container app (aspect-ratio >= 1) {
   html[data-theme="twin"] .cam-banner { top: 6px; bottom: auto; }
 }
+
+/* ---- 사각지대 경보 (§19.5): 좌/우 가장자리 붉은 글로우. 방향지시등이 같은 쪽이면 더 강하게. ---- */
+.blind {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+.blind-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18%;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.blind-edge.l {
+  left: 0;
+  background: linear-gradient(to right, rgba(255, 40, 60, 0.55), rgba(255, 40, 60, 0));
+}
+.blind-edge.r {
+  right: 0;
+  background: linear-gradient(to left, rgba(255, 40, 60, 0.55), rgba(255, 40, 60, 0));
+}
+.blind.on-l .blind-edge.l,
+.blind.on-r .blind-edge.r {
+  opacity: 1;
+  animation: blind-breathe 1.2s ease-in-out infinite;
+}
+.blind.strong-l .blind-edge.l,
+.blind.strong-r .blind-edge.r {
+  opacity: 0.85;
+  animation: blind-blink 0.4s ease-in-out infinite;
+}
+.blind.mirror { transform: scaleY(-1); }
+@keyframes blind-breathe {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+@keyframes blind-blink {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 0.2; }
+}
+
+a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 
 /* ---- 종료 오버레이 (§15.3) ----------------------------------------------- */
 .quit-overlay {

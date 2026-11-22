@@ -285,6 +285,12 @@ async function main() {
       // 화면 켜짐(Wake Lock) 권한: 헤드리스 기본값은 거부라서 허용해 둔다 (실기기는 권한 없이도 요청 가능)
       try { await ctx.grantPermissions(['screen-wake-lock']); } catch (e) { /* 이 빌드에 없는 권한 이름 */ }
       const page = await ctx.newPage();
+      // 회전 잠금을 거부해 CSS 회전 대체 경로를 탄다 (헤드리스는 잠금이 빈 동작으로 성공하므로, §19.3)
+      await page.addInitScript(() => {
+        try {
+          Object.defineProperty(screen.orientation, 'lock', { value: () => Promise.reject(new DOMException('blocked', 'NotSupportedError')), configurable: true });
+        } catch (e) { /* 미지원 */ }
+      });
       const errors = [];
       const externalFailures = [];
       page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
@@ -368,6 +374,16 @@ async function main() {
           m.speedHits.join(', ') || 'none');
         if (theme === 'minimal' && vp.w === 390 && vp.h === 844) {
           check(`${tag} 3자리 속도 폭 >= 250px`, m.speed.w >= 250, `width ${Math.round(m.speed.w)}px`);
+        }
+        // §19.4 방향지시등 크기: 기본 테마는 세로 64px, 가로 72px 이상
+        if (theme === 'minimal' || theme === 'plaid') {
+          const tb = await page.evaluate(() => {
+            const a = document.getElementById('turn-l').getBoundingClientRect();
+            const b = document.getElementById('turn-r').getBoundingClientRect();
+            return Math.min(a.width, a.height, b.width, b.height);
+          });
+          const want = vp.w > vp.h ? 72 : 64;
+          check(`${tag} 방향지시등 크기 >= ${want}px (§19.4)`, tb >= want - 0.5, `${tb.toFixed(1)}px`);
         }
 
         // §13.4 (b) 카메라 배너 제목 1줄, 화면 안
@@ -480,11 +496,93 @@ async function main() {
           hits,
         };
       });
-      check(`${vpTag} 설정: 버전 표시 2.3.0`, appLayout.version === '2.3.0', appLayout.version);
+      check(`${vpTag} 설정: 버전 표시 2.4.0`, appLayout.version === '2.4.0', appLayout.version);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 시트 안에 보임`, appLayout.refreshIn && appLayout.quitIn,
         `refresh ${appLayout.refreshIn} quit ${appLayout.quitIn}`);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 서로·다른 버튼과 겹치지 않음`, !appLayout.sameRowHit && appLayout.hits.length === 0,
         appLayout.hits.join(', ') || 'none');
+
+      // §19.7 카메라 DB 다운로드 링크: 보이고, href·새 탭·rel 이 정확하고, 다른 버튼과 겹치지 않는다
+      const dbLink = await page.evaluate(() => {
+        const a = document.getElementById('cam-db-link');
+        const sheet = document.getElementById('sheet-settings');
+        a.scrollIntoView({ block: 'center' });
+        const r = (el) => { const b = el.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; };
+        const hit = (x, y) => x.l < y.r && y.l < x.r && x.t < y.b && y.t < x.b;
+        const me = r(a);
+        const others = [...sheet.querySelectorAll('button, a')].filter((e) => e !== a).map(r);
+        const sb = r(sheet);
+        return {
+          href: a.getAttribute('href'),
+          target: a.getAttribute('target'),
+          rel: a.getAttribute('rel'),
+          visible: me.r > me.l && me.b > me.t && me.l >= sb.l && me.r <= sb.r && me.t >= sb.t - 1 && me.b <= sb.b + 1,
+          overlaps: others.filter((o) => hit(me, o)).length,
+        };
+      });
+      check(`${vpTag} 카메라 DB 링크: href·새 탭·rel 정확, 시트 안에 보임`,
+        dbLink.href === 'https://www.data.go.kr/data/15028200/standard.do' && dbLink.target === '_blank'
+          && dbLink.rel === 'noopener' && dbLink.visible,
+        `href=${dbLink.href} target=${dbLink.target} rel=${dbLink.rel} visible=${dbLink.visible}`);
+      check(`${vpTag} 카메라 DB 링크: 다른 버튼과 겹치지 않음`, dbLink.overlaps === 0, `overlaps=${dbLink.overlaps}`);
+      await page.evaluate(() => { document.getElementById('sheet-settings').scrollTop = 0; });
+
+      // §19.5 사각지대 오버레이: 데모에서 켜지면 가장자리 글로우가 보이고, 클릭을 막지 않는다
+      await page.click('#sheet-settings .x');
+      await page.waitForFunction(() => document.getElementById('blind').classList.contains('on-l'), null, { timeout: 25000 });
+      const blind = await page.evaluate(() => {
+        const edge = document.querySelector('#blind .blind-edge.l');
+        const op = parseFloat(getComputedStyle(edge).opacity);
+        const topAtLeft = document.elementFromPoint(12, innerHeight / 2);
+        const onDock = document.querySelector('.dock [data-act="settings"]').getBoundingClientRect();
+        const atDock = document.elementFromPoint(onDock.left + onDock.width / 2, onDock.top + onDock.height / 2);
+        return { op, leftInsideBlind: !!(topAtLeft && topAtLeft.closest('#blind')), dockBlocked: !!(atDock && atDock.closest('#blind')) };
+      });
+      check(`${vpTag} 사각지대 좌측 글로우 보임, 클릭 막지 않음`, blind.op > 0.2 && !blind.leftInsideBlind && !blind.dockBlocked,
+        `opacity=${blind.op.toFixed(2)} blockedLeft=${blind.leftInsideBlind} blockedDock=${blind.dockBlocked}`);
+      await page.click('.dock [data-act="settings"]');
+
+      // §19.3 화면 방향 전환 버튼: 자동 → 가로 → 세로 → 자동. 잠금이 안 되면 앱 루트를 CSS로 돌린다.
+      // 가로 강제 (실기기가 세로일 때): 레이아웃 박스가 가로형, 화면 안에 보임, 가로 SVG 규칙 적용, 설정 시트가 열린다
+      await page.click('#sheet-settings .x');
+      await page.click('#btn-orient'); // 자동 -> 가로
+      await page.waitForTimeout(400);
+      const landOrient = await page.evaluate(() => {
+        const app = document.getElementById('app');
+        const r = app.getBoundingClientRect();
+        return {
+          lw: app.offsetWidth, lh: app.offsetHeight, rot: app.classList.contains('rot'),
+          inside: r.left >= -1 && r.top >= -1 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1,
+          vb: document.getElementById('fx').getAttribute('viewBox'), vw: innerWidth, vh: innerHeight,
+        };
+      });
+      check(`${vpTag} 방향 가로: 레이아웃 박스가 가로형, 화면 안`, landOrient.lw > landOrient.lh && landOrient.inside,
+        `box ${landOrient.lw}x${landOrient.lh} rot=${landOrient.rot} inside=${landOrient.inside}`);
+      if (vp.w < vp.h) {
+        // 세로 기기: 가로 요청은 잠금 실패 시 CSS 회전이어야 한다 (잠금 성공이면 그대로)
+        check(`${vpTag} 방향 가로 강제: 세로 기기에서 CSS 회전 또는 잠금`, landOrient.rot || landOrient.lw > landOrient.lh,
+          `rot=${landOrient.rot}`);
+      }
+      if (landOrient.lw > landOrient.lh) {
+        check(`${vpTag} 방향 가로: 가로 SVG 규칙 적용 (hud viewBox 960x400)`, landOrient.vb === '0 0 960 400', `viewBox=${landOrient.vb}`);
+      }
+      await page.click('.dock [data-act="settings"]');
+      await page.waitForTimeout(200);
+      check(`${vpTag} 방향 가로: 설정 시트 열림`, await page.evaluate(() => !document.getElementById('sheet-settings').hidden));
+      await page.click('#sheet-settings .x');
+      // 세로 강제 (실기기가 가로일 때 세로 요청) 및 자동 복귀
+      await page.click('#btn-orient'); // 가로 -> 세로
+      await page.waitForTimeout(400);
+      const portOrient = await page.evaluate(() => {
+        const app = document.getElementById('app');
+        return { lw: app.offsetWidth, lh: app.offsetHeight, rot: app.classList.contains('rot') };
+      });
+      check(`${vpTag} 방향 세로: 레이아웃 박스가 세로형`, portOrient.lw < portOrient.lh, `box ${portOrient.lw}x${portOrient.lh} rot=${portOrient.rot}`);
+      await page.click('#btn-orient'); // 세로 -> 자동
+      await page.waitForTimeout(300);
+      const autoOrient = await page.evaluate(() => ({ rot: document.getElementById('app').classList.contains('rot'), lw: document.getElementById('app').offsetWidth }));
+      check(`${vpTag} 방향 자동: 회전 해제, 실제 화면 크기 레이아웃`, !autoOrient.rot && autoOrient.lw === vp.w, `rot=${autoOrient.rot} lw=${autoOrient.lw} vw=${vp.w}`);
+      await page.click('.dock [data-act="settings"]'); // 이후 단계는 설정 시트가 열린 상태를 기대한다
 
       if (vp.w === 390 && vp.h === 844) {
         // §15.2 새로고침: 설정(localStorage) 유지, 이전 캐시 삭제, 다시 로드
@@ -499,7 +597,7 @@ async function main() {
           keys: await caches.keys(),
         }));
         check('새로고침: 설정 유지 (사운드 v10 저장값)', after.saved === 'v10', `saved=${after.saved}`);
-        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.3.0'),
+        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.4.0'),
           after.keys.join(', ') || 'none');
 
         // §15.3 종료: 모든 기능 정지, 오버레이 표시, 다시 시작으로 정상 복귀

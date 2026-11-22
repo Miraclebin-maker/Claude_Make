@@ -176,6 +176,20 @@ export function createUi() {
     text('btn-zero', s.zero.mode === 0 ? '0-100 측정 시작' : '0-100 측정 취소');
   }
 
+  // 사각지대 경보 (§19.5): 켜진 쪽 가장자리 글로우. 같은 쪽 방향지시등이 켜져 있으면 강하게.
+  function renderBlind(s) {
+    const el = node('blind');
+    if (!el) return;
+    const t = s.telem;
+    const turnL = !!(t && (t.turn & 1));
+    const turnR = !!(t && (t.turn & 2));
+    cls('blind', s.blindLeft, 'on-l');
+    cls('blind', s.blindRight, 'on-r');
+    cls('blind', s.blindLeft && turnL, 'strong-l');
+    cls('blind', s.blindRight && turnR, 'strong-r');
+    cls('blind', s.mirror, 'mirror');
+  }
+
   function render(s) {
     const root = document.documentElement;
     if (root.dataset.theme !== s.theme) root.dataset.theme = s.theme;
@@ -184,6 +198,10 @@ export function createUi() {
     renderGauge(s);
     renderInfo(s);
     renderSettings(s);
+    renderBlind(s);
+    show('ic-orient-auto', s.orient === 'auto');
+    show('ic-orient-landscape', s.orient === 'landscape');
+    show('ic-orient-portrait', s.orient === 'portrait');
     show('fs-expand', !s.fullscreen);
     show('fs-collapse', !!s.fullscreen);
     show('scrim', !!s.sheet);

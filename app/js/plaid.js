@@ -36,10 +36,12 @@ export function createPlaid(canvas) {
     };
   }
 
+  // 앱 루트 크기 기준 (§19.3: CSS 회전 대체 때도 맞도록). 회전된 박스의 레이아웃 크기는 offset 으로 읽는다.
   function resize() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    w = window.innerWidth;
-    h = window.innerHeight;
+    const box = canvas.parentElement || canvas;
+    w = box.offsetWidth || window.innerWidth;
+    h = box.offsetHeight || window.innerHeight;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -144,6 +146,9 @@ export function createPlaid(canvas) {
 
   resize();
   window.addEventListener('resize', resize);
+  if (typeof ResizeObserver !== 'undefined' && canvas.parentElement) {
+    new ResizeObserver(resize).observe(canvas.parentElement);
+  }
 
   return { update, start, stop, get hyper() { return hyper; }, reduceMotion };
 }

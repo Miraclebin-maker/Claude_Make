@@ -11,6 +11,7 @@ const KEY = {
   sound: 'tsl_sound_profile',
   volume: 'tsl_volume',
   chime: 'tsl_chime',
+  orient: 'tsl_orient',
 };
 
 // 목록에 없는 저장값(삭제된 음원 키 포함)은 'off' 로 바뀐다 (v2 마이그레이션)
@@ -120,6 +121,16 @@ export function getChime() {
 
 export function setChime(on) {
   return write(KEY.chime, on ? '1' : '0');
+}
+
+// 화면 방향 선택: auto | landscape | portrait (§19.3). 모르는 값은 auto.
+export function getOrient() {
+  const v = read(KEY.orient, 'auto');
+  return v === 'landscape' || v === 'portrait' ? v : 'auto';
+}
+
+export function setOrient(mode) {
+  return write(KEY.orient, mode);
 }
 
 export function getVolume() {

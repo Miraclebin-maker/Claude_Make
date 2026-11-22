@@ -84,13 +84,13 @@ function arcLayout(m) {
   if (m === 'p') {
     return {
       cx: 200, cy: 262, R: 180, half: 120, speedFont: 110, unitY: 150, kwX: 200, kwY: 390, frY: 424, kwFont: 40,
-      limit: [70, 480, 44], turnL: [150, 480, 56], turnR: [250, 480, 56],
+      limit: [64, 520, 44], turnL: [152, 520, 84], turnR: [248, 520, 84], // §19.4: 방향지시등 1.5배
       powerR: 142, labelR: 158, labelSize: 16, majorIn: 16, minorIn: 11,
     };
   }
   return {
     cx: 480, cy: 193, R: 184, half: 100, speedFont: 110, unitY: 92, kwX: 840, kwY: 110, frY: 150, kwFont: 50,
-    limit: [120, 80, 50], turnL: [120, 170, 56], turnR: [840, 200, 56],
+    limit: [120, 80, 50], turnL: [120, 190, 84], turnR: [840, 215, 84],
     powerR: 142, labelR: 158, labelSize: 16, majorIn: 16, minorIn: 11,
   };
 }
@@ -138,15 +138,15 @@ function twinLayout(m) {
     return {
       sx: 200, sy: 215, sR: 130, spdFont: 56, spdY: 292, unitY: 336,
       px: 200, py: 455, pR: 100, kwFont: 36, kwY: 530,
-      limit: [56, 110, 42], turnL: [60, 455, 52], turnR: [340, 455, 52],
+      limit: [56, 110, 42], turnL: [60, 455, 78], turnR: [340, 455, 78],
       labelSpd: 16, labelKw: 15, unitX: 200, unitAnchor: 'middle',
     };
   }
   return {
     // 게이지 묶음 전체를 viewBox 가로 중앙에 둔다 (§16.1). 카메라 배너는 좌상단으로 옮김(CSS).
     sx: 323, sy: 102, sR: 96, spdFont: 110, spdY: 214, unitX: 443, unitY: 200, unitAnchor: 'start',
-    px: 653, py: 102, pR: 80, kwFont: 40, kwY: 200,
-    limit: [496, 80, 40], turnL: [473, 252, 56], turnR: [531, 252, 56],
+    px: 653, py: 102, pR: 80, kwFont: 40, kwY: 170,
+    limit: [496, 80, 40], turnL: [620, 240, 84], turnR: [710, 240, 84],
     labelSpd: 16, labelKw: 16,
   };
 }
@@ -192,9 +192,9 @@ function twinUpdate(vals, q) {
 // ---- HUD -----------------------------------------------------------------
 function hudLayout(m) {
   if (m === 'p') {
-    return { cx: 200, spdY: 300, spdFont: 190, unitY: 440, unitFont: 40, limit: [200, 120, 46], turnL: [120, 530, 60], turnR: [280, 530, 60] };
+    return { cx: 200, spdY: 300, spdFont: 190, unitY: 440, unitFont: 40, limit: [200, 120, 46], turnL: [120, 530, 90], turnR: [280, 530, 90] };
   }
-  return { cx: 480, spdY: 180, spdFont: 210, unitY: 346, unitFont: 44, limit: [860, 90, 52], turnL: [110, 200, 80], turnR: [850, 200, 80] };
+  return { cx: 480, spdY: 180, spdFont: 210, unitY: 346, unitFont: 44, limit: [860, 90, 52], turnL: [110, 200, 120], turnR: [850, 230, 120] };
 }
 
 function hudSvg(m) {
@@ -227,10 +227,12 @@ export function createGauge(svg, cluster) {
   let built = false;
   const cache = new Map();
 
+  // 레이아웃 박스 기준 (CSS 회전 대체 때 시각 박스가 아니라 실제 배치 크기로 판단, §19.3)
   function currentMode() {
-    const r = cluster.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) return null;
-    return r.width / r.height >= 1 ? 'l' : 'p';
+    const w = cluster.offsetWidth;
+    const h = cluster.offsetHeight;
+    if (w <= 0 || h <= 0) return null;
+    return w / h >= 1 ? 'l' : 'p';
   }
 
   function build(t, m) {

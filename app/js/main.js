@@ -9,6 +9,7 @@ import { createDemo, DEMO_HV } from './demo.js';
 import { createPlaid } from './plaid.js';
 import { APP_VERSION, APP_FILES } from './version.js';
 import { controllerChangeAction } from './update-policy.js';
+import { nextOrientMode, physicalOf, needsRotation, isOrientMode } from './orientation.js';
 
 const SOUND_LABEL = {
   off: '음소거',
@@ -43,6 +44,10 @@ const state = {
   cam: { enabled: settings.isCamEnabled(), radius: settings.getCamRadius(), gps: '대기', count: 0, banner: null },
   plaidHyper: false,
   quit: false, // 종료 후 true: 연결·재생·GPS·화면 꺼짐 방지를 모두 막는다
+  orient: settings.getOrient(), // 화면 방향 선택 (§19.3)
+  lockOk: false, // 회전 잠금에 성공했는지
+  blindLeft: false, // 사각지대 경보 (§19.5). 실제 176 파서에는 필드가 없어 데모만 켠다
+  blindRight: false,
   sheet: null,
   latest: { speed: 0, pedal: 0, kw: 0 },
   fullscreen: false,
@@ -78,6 +83,8 @@ const cam = createCameraWatch({
     schedule();
   },
   toast: (m) => ui.toast(m),
+  // 차량 속도: 연결 중이거나 데모일 때만 텔레메트리 값 (끊긴 뒤의 낡은 값은 쓰지 않는다)
+  getSpeedKmh: () => ((state.demo || state.conn.state === 'connected') && state.telem ? state.telem.speed : null),
 });
 state.cam.count = cam.count();
 
@@ -161,6 +168,14 @@ function onFrame(f) {
   if (state.theme === 'plaid' && hyper && !lastHyper) ui.flashShake();
   lastHyper = hyper;
   state.plaidHyper = hyper;
+
+  // 사각지대: 켜지는 순간 같은 쪽 방향지시등이 켜져 있으면 경고음 1회 (경고음 설정이 ON일 때만 소리 난다)
+  const bl = !!f.blindLeft;
+  const br = !!f.blindRight;
+  if (bl && !state.blindLeft && (f.turn & 1)) audio.playChime();
+  if (br && !state.blindRight && (f.turn & 2)) audio.playChime();
+  state.blindLeft = bl;
+  state.blindRight = br;
 
   state.telem = { ...f, totalKw };
   state.latest = { speed: f.speed, pedal: f.pedal, kw: totalKw };
@@ -356,6 +371,7 @@ function forgetDevice() {
 // ---- 이벤트 바인딩 ------------------------------------------------------
 const ACTIONS = {
   'refresh-app': () => refreshApp(),
+  orient: () => applyOrient(nextOrientMode(state.orient), true),
   quit: () => quitApp(),
   restart: () => location.reload(),
   conn: () => toggleConnection(),
@@ -479,6 +495,7 @@ document.addEventListener('visibilitychange', () => {
 setInterval(() => audio.tick(state.latest.speed, state.latest.pedal, state.latest.kw, Math.max(200, state.trip.maxKw)), 1000 / 60);
 
 async function boot() {
+  updateRotation();
   cam.start();
   syncWakeLock();
   schedule();
@@ -531,6 +548,39 @@ function quitApp() {
 }
 
 document.getElementById('app-version').textContent = APP_VERSION;
+
+// ---- 화면 방향 (§19.3) --------------------------------------------------
+// 자동/가로/세로. 잠금이 되면 그대로 두고, 안 되면 앱 루트를 CSS로 돌려 같은 모양을 낸다.
+function updateRotation() {
+  const phys = physicalOf(window.innerWidth, window.innerHeight);
+  const rot = needsRotation(state.orient, state.lockOk, phys);
+  document.getElementById('app').classList.toggle('rot', rot);
+  schedule();
+}
+
+async function applyOrient(mode, fromGesture) {
+  if (!isOrientMode(mode)) return;
+  state.orient = mode;
+  settings.setOrient(mode);
+  state.lockOk = false;
+  if (mode === 'auto') {
+    try { screen.orientation.unlock(); } catch (e) { /* 미지원 */ }
+  } else {
+    // 잠금은 전체화면에서만 되는 브라우저가 많다. 버튼 누름(제스처) 안에서 먼저 전체화면을 요청한다.
+    if (fromGesture && !document.fullscreenElement) {
+      try { await document.documentElement.requestFullscreen(); } catch (e) { /* 무시 */ }
+    }
+    try {
+      await screen.orientation.lock(mode);
+      state.lockOk = true;
+    } catch (e) { /* 잠금 실패: 아래에서 CSS 회전으로 대체 */ }
+  }
+  updateRotation();
+  ui.toast(mode === 'auto' ? '화면 방향: 자동' : `화면 방향: ${mode === 'landscape' ? '가로' : '세로'}`);
+}
+
+window.addEventListener('resize', updateRotation);
+window.addEventListener('orientationchange', updateRotation);
 
 if ('serviceWorker' in navigator) {
   // 설정 파일을 HTTP 캐시에서 읽지 않도록 워커 스크립트를 항상 서버에서 확인한다.
