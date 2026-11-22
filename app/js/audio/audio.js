@@ -13,7 +13,7 @@ export function createAudio() {
   let profile = 'off';
   let ev = null;
   let volume = settings.getVolume();
-  let chimeOn = true;
+  let chimeOn = false; // 기본 OFF (main.js 가 저장값으로 덮어씀)
   let previewing = false;
   let previewStep = 0;
   let lastTickMs = 0;

@@ -22,6 +22,7 @@ const VIEWPORTS = [
   { w: 640, h: 360 },
   { w: 412, h: 780 },
   { w: 780, h: 340 },
+  { w: 1000, h: 460 }, // 실기기 가로 전체화면 (§16.1)
 ];
 const THEMES = ['minimal', 'plaid', 'arc', 'twin', 'hud'];
 const SVG_THEMES = ['arc', 'twin', 'hud'];
@@ -228,6 +229,17 @@ async function measure(page, theme) {
       const cl = box(document.getElementById('cluster').getBoundingClientRect());
       out.fxBox = fx;
       out.clusterBox = cl;
+      // 게이지 구성 요소(보이는 것)의 합집합 가로 중심과 클러스터 가로 중심의 차이 (폭 대비)
+      if (innerWidth > innerHeight) {
+        let u = null;
+        document.getElementById('fx').querySelectorAll('*').forEach((e) => {
+          if (e.closest('defs')) return;
+          const r = rectOf(e);
+          if (!r) return;
+          u = u ? { l: Math.min(u.l, r.l), r: Math.max(u.r, r.r) } : { l: r.l, r: r.r };
+        });
+        out.centerErr = u ? Math.abs((u.l + u.r) / 2 - (cl.l + cl.r) / 2) / (cl.r - cl.l) : null;
+      }
       out.fxInCluster = !!fx && inside(fx, cl);
       out.fxSpeedInFx = !!fx && !!speedRect && inside(speedRect, fx);
     }
@@ -270,6 +282,8 @@ async function main() {
     for (const vp of VIEWPORTS) {
       const vpTag = `${vp.w}x${vp.h}`;
       const ctx = await browser.newContext({ viewport: { width: vp.w, height: vp.h } });
+      // 화면 켜짐(Wake Lock) 권한: 헤드리스 기본값은 거부라서 허용해 둔다 (실기기는 권한 없이도 요청 가능)
+      try { await ctx.grantPermissions(['screen-wake-lock']); } catch (e) { /* 이 빌드에 없는 권한 이름 */ }
       const page = await ctx.newPage();
       const errors = [];
       const externalFailures = [];
@@ -287,6 +301,38 @@ async function main() {
 
       await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
       await page.waitForSelector('#val-speed');
+
+      // §16.2 경고음 기본 OFF (저장값 없음), §16.3 화면 켜짐 상태 표시
+      await page.waitForTimeout(300);
+      const boot16 = await page.evaluate(() => ({
+        chimeBtn: document.getElementById('btn-chime').textContent,
+        chimeSaved: localStorage.getItem('tsl_chime'),
+        wake: document.getElementById('wake-status').textContent,
+        hasWakeLock: 'wakeLock' in navigator,
+      }));
+      check(`${vpTag} 경고음 기본값 OFF (저장값 없음)`, boot16.chimeBtn === '경고음: OFF' && boot16.chimeSaved === null,
+        `${boot16.chimeBtn} saved=${boot16.chimeSaved}`);
+      const wakeExpect = boot16.hasWakeLock ? '사용 중' : '이 브라우저는 지원하지 않음';
+      check(`${vpTag} 화면 켜짐 상태 표시 (${wakeExpect})`, boot16.wake === wakeExpect, `status="${boot16.wake}"`);
+
+      if (vp.w === 390 && vp.h === 844) {
+        // 경고음 ON 저장 -> 새로고침 후에도 유지 -> OFF
+        await page.click('.dock [data-act="settings"]');
+        await page.click('#btn-chime');
+        await page.waitForTimeout(150);
+        check('경고음 ON 저장 (tsl_chime=1)', (await page.evaluate(() => localStorage.getItem('tsl_chime'))) === '1');
+        const reloadedChime = page.waitForEvent('load', { timeout: 20000 });
+        await page.reload();
+        await reloadedChime;
+        await page.waitForSelector('#val-speed');
+        await page.waitForTimeout(200);
+        check('경고음 ON 저장값 다음 실행에도 유지', (await page.evaluate(() => document.getElementById('btn-chime').textContent)) === '경고음: ON');
+        await page.click('.dock [data-act="settings"]');
+        await page.click('#btn-chime');
+        await page.waitForTimeout(150);
+        check('경고음 OFF 저장 (tsl_chime=0)', (await page.evaluate(() => localStorage.getItem('tsl_chime'))) === '0');
+        await page.click('#sheet-settings .x');
+      }
 
       // 데모 시작: 설정 시트 -> 데모 -> 시트 닫기
       await page.click('.dock [data-act="settings"]');
@@ -352,6 +398,11 @@ async function main() {
           && m.fs.box.r <= m.innerW && m.fs.box.b <= m.innerH), m.fs.box ? 'visible' : 'hidden/unsupported');
         check(`${tag} 전체화면 버튼 vs 다른 버튼 비교차`, m.fs.hits.length === 0, m.fs.hits.join(', ') || 'none');
 
+        // §16.1 가로 중심 정렬 (arc·twin): 게이지 묶음 중심과 클러스터 중심의 차이 ≤ 폭의 3%
+        if ((theme === 'arc' || theme === 'twin') && vp.w > vp.h) {
+          check(`${tag} 게이지 가로 중심 정렬 (폭의 3% 이내)`, m.centerErr !== null && m.centerErr <= 0.03,
+            m.centerErr === null ? 'no svg element' : `차이 ${(m.centerErr * 100).toFixed(2)}%`);
+        }
         // 가로 780x340 최소 크기 (신규 SVG 테마)
         if (SVG_THEMES.includes(theme) && vp.w === 780 && vp.h === 340) {
           const z = m.sizes;
@@ -416,7 +467,7 @@ async function main() {
           hits,
         };
       });
-      check(`${vpTag} 설정: 버전 표시 2.1.0`, appLayout.version === '2.1.0', appLayout.version);
+      check(`${vpTag} 설정: 버전 표시 2.2.0`, appLayout.version === '2.2.0', appLayout.version);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 시트 안에 보임`, appLayout.refreshIn && appLayout.quitIn,
         `refresh ${appLayout.refreshIn} quit ${appLayout.quitIn}`);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 서로·다른 버튼과 겹치지 않음`, !appLayout.sameRowHit && appLayout.hits.length === 0,
@@ -435,7 +486,7 @@ async function main() {
           keys: await caches.keys(),
         }));
         check('새로고침: 설정 유지 (사운드 motor 저장값)', after.saved === 'motor', `saved=${after.saved}`);
-        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.1.0'),
+        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.2.0'),
           after.keys.join(', ') || 'none');
 
         // §15.3 종료: 모든 기능 정지, 오버레이 표시, 다시 시작으로 정상 복귀

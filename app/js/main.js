@@ -37,7 +37,8 @@ const state = {
   mirror: false,
   sound: settings.getSound(),
   volume: settings.getVolume(),
-  chime: true,
+  chime: settings.getChime(), // 기본 OFF (§16.2)
+  wake: 'off', // 화면 켜짐 상태: unsupported | on | off (§16.3)
   autoConnect: settings.isAutoConnect(),
   devName: savedDevice ? savedDevice.name : '',
   cam: { enabled: settings.isCamEnabled(), radius: settings.getCamRadius(), gps: '대기', count: 0, banner: null },
@@ -50,6 +51,7 @@ const state = {
 
 const ui = createUi();
 const audio = createAudio();
+audio.setChime(settings.getChime());
 const plaid = createPlaid(document.getElementById('plaid-canvas'));
 const demo = createDemo();
 let demoTimer = null;
@@ -233,20 +235,53 @@ function toggleConnection() {
 }
 
 // ---- 화면 꺼짐 방지 (연결 또는 데모 중 자동) ------------------------------
+// 화면 켜짐 유지 (§16.3): 앱이 보이는 동안 항상 요청. 종료 후에는 요청하지 않는다.
 let wakeSentinel = null;
-async function syncWakeLock() {
-  const want = !state.quit && (state.conn.state === 'connected' || state.demo);
-  if (!('wakeLock' in navigator)) return;
-  if (want && !wakeSentinel) {
+let wakeBusy = false;
+let wakePending = false;
+const wakeWanted = () => !state.quit && !document.hidden;
+
+async function applyWakeLock() {
+  if (wakeWanted() && !wakeSentinel) {
     try {
-      wakeSentinel = await navigator.wakeLock.request('screen');
-      wakeSentinel.addEventListener('release', () => { wakeSentinel = null; });
-    } catch (e) { /* 미지원 / 거부 */ }
-  } else if (!want && wakeSentinel) {
+      const s = await navigator.wakeLock.request('screen');
+      wakeSentinel = s;
+      s.addEventListener('release', () => {
+        if (wakeSentinel === s) wakeSentinel = null;
+        state.wake = 'off';
+        schedule();
+        // 시스템이 해제했지만 아직 보이는 상태면 다시 요청
+        if (wakeWanted()) syncWakeLock();
+      });
+    } catch (e) { /* 거부: 다음 가시성 변화 때 다시 시도 */ }
+  } else if (!wakeWanted() && wakeSentinel) {
     const s = wakeSentinel;
     wakeSentinel = null;
     try { await s.release(); } catch (e) { /* noop */ }
   }
+}
+
+async function syncWakeLock() {
+  if (!('wakeLock' in navigator)) {
+    state.wake = 'unsupported';
+    schedule();
+    return;
+  }
+  if (wakeBusy) {
+    wakePending = true;
+    return;
+  }
+  wakeBusy = true;
+  try {
+    do {
+      wakePending = false;
+      await applyWakeLock();
+    } while (wakePending);
+  } finally {
+    wakeBusy = false;
+  }
+  state.wake = wakeSentinel ? 'on' : 'off';
+  schedule();
 }
 
 // ---- 설정 동작 ----------------------------------------------------------
@@ -329,6 +364,7 @@ const ACTIONS = {
   close: () => closeSheets(),
   chime: () => {
     state.chime = !state.chime;
+    settings.setChime(state.chime);
     audio.setChime(state.chime);
     schedule();
   },
@@ -435,7 +471,7 @@ document.getElementById('cam-file').addEventListener('change', (e) => {
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) syncWakeLock();
+  syncWakeLock(); // 보이면 요청, 숨겨지면 해제 (§16.3)
 });
 
 // ---- 주기 작업 ----------------------------------------------------------
@@ -444,6 +480,7 @@ setInterval(() => audio.tick(state.latest.speed, state.latest.pedal, state.lates
 
 async function boot() {
   cam.start();
+  syncWakeLock();
   schedule();
   const result = await ble.autoConnect();
   if (['disabled', 'no-device', 'unavailable', 'not-found'].includes(result)) {

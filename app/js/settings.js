@@ -10,6 +10,7 @@ const KEY = {
   camDb: 'tsl_cam_db',
   sound: 'tsl_sound_profile',
   volume: 'tsl_volume',
+  chime: 'tsl_chime',
 };
 
 // 목록에 없는 저장값(삭제된 음원 키 포함)은 'off' 로 바뀐다 (v2 마이그레이션)
@@ -110,6 +111,15 @@ export function getSound() {
 
 export function setSound(key) {
   return write(KEY.sound, key);
+}
+
+// 경고음 기본값은 OFF. 저장값이 '1'일 때만 ON.
+export function getChime() {
+  return read(KEY.chime, '0') === '1';
+}
+
+export function setChime(on) {
+  return write(KEY.chime, on ? '1' : '0');
 }
 
 export function getVolume() {

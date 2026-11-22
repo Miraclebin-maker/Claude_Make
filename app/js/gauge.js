@@ -143,10 +143,10 @@ function twinLayout(m) {
     };
   }
   return {
-    // 좌하단 카메라 배너(§5.3)와 겹치지 않도록 속도 다이얼을 오른쪽에 둔다
-    sx: 440, sy: 102, sR: 96, spdFont: 110, spdY: 214, unitX: 560, unitY: 200, unitAnchor: 'start',
-    px: 770, py: 102, pR: 80, kwFont: 40, kwY: 200,
-    limit: [613, 80, 40], turnL: [590, 252, 56], turnR: [648, 252, 56],
+    // 게이지 묶음 전체를 viewBox 가로 중앙에 둔다 (§16.1). 카메라 배너는 좌상단으로 옮김(CSS).
+    sx: 323, sy: 102, sR: 96, spdFont: 110, spdY: 214, unitX: 443, unitY: 200, unitAnchor: 'start',
+    px: 653, py: 102, pR: 80, kwFont: 40, kwY: 200,
+    limit: [496, 80, 40], turnL: [473, 252, 56], turnR: [531, 252, 56],
     labelSpd: 16, labelKw: 16,
   };
 }

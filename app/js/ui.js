@@ -8,6 +8,7 @@ const CONN_LABEL = {
   searching: '기기 찾는 중',
   reconnecting: '재연결 중',
 };
+const WAKE_LABEL = { unsupported: '이 브라우저는 지원하지 않음', on: '사용 중', off: '대기' };
 const THEME_NAMES = { minimal: '미니멀', plaid: '플래드 워프', arc: '퍼포먼스 아크', twin: '트윈 다이얼', hud: 'HUD' };
 
 export function themeName(key) {
@@ -155,6 +156,7 @@ export function createUi() {
     const vol = node('sound-volume');
     if (vol && Number(vol.value) !== s.volume) vol.value = String(s.volume);
     text('volume-val', s.volume);
+    text('wake-status', WAKE_LABEL[s.wake] || '--');
     text('btn-chime', `경고음: ${s.chime ? 'ON' : 'OFF'}`);
     cls('btn-chime', s.chime, 'on');
     text('btn-mirror', s.mirror ? 'ON' : 'OFF');

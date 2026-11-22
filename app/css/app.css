@@ -683,6 +683,11 @@ html[data-theme="hud"] .dock { opacity: 0.4; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
+/* 트윈 가로: 게이지가 가운데로 와서 카메라 배너는 좌상단으로 옮긴다 (§16.1) */
+@media (orientation: landscape) {
+  html[data-theme="twin"] .cam-banner { top: 6px; bottom: auto; }
+}
+
 /* ---- 종료 오버레이 (§15.3) ----------------------------------------------- */
 .quit-overlay {
   position: fixed;
