@@ -685,3 +685,16 @@ Capacitor/APK 빌드, 차량 쓰기 기능 일체, 새 데이터 필드 파싱, 
 
 ### 23.7 APK 자동 빌드 중단 (사용자 결정)
 - APK 빌드를 당분간 하지 않는다. `android.yml`의 `push` 트리거를 제거하고 `workflow_dispatch`(수동 실행)만 남긴다. APK 관련 코드(`ble-native.js`, Capacitor 설정, 테스트)는 그대로 둔다(웹 동작에 영향 없음). 다시 필요하면 Actions 탭에서 "Test APK (Capacitor)" → Run workflow.
+
+## 25. 웹 전용으로 확정 (사용자 결정)
+
+사용자 결정: 앞으로 **웹(PWA) 방식으로만** 제작한다. §23(테스트 APK)은 폐기한다. 코드는 git 기록(커밋 `ba2dc09`, `0fb0d8c`)에 남아 있어 필요하면 되살릴 수 있다.
+
+### 25.1 정리 (v2.8 커밋 뒤 별도 커밋으로)
+- 삭제: `app/js/ble-native.js`, `tests/ble-native.test.mjs`, `capacitor.config.json`, `.github/workflows/android.yml`.
+- `package.json`에서 Capacitor 관련 의존성(`@capacitor/*`, `@capacitor-community/bluetooth-le`) 제거, `package-lock.json` 재생성(또는 의존성이 없으면 삭제). `.gitignore`의 `/android/`, `/ios/` 줄 제거.
+- `app/js/main.js`: `isNativeApp()` 분기 제거, 항상 `TslBle`(Web Bluetooth). 서비스워커 등록·새로고침 버튼은 웹 동작만.
+- `app/sw.js`·`version.js`의 셸·APP_FILES 목록에서 `ble-native.js` 제거.
+- README의 "테스트 APK" 절 제거, §9의 "APK 전환 대비" 문구는 그대로 둬도 됨(역사 기록).
+- 버전은 v2.8과 같은 릴리스로 묶지 않고 2.8.1로.
+- 검증: `npm test`, 스모크 PASS, `grep -rn "Capacitor\|ble-native" app tests` 결과 없음.
