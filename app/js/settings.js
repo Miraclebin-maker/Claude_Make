@@ -105,6 +105,27 @@ export function setCamDb(list) {
   return write(KEY.camDb, JSON.stringify(list));
 }
 
+// 테마·HUD 반전 (§24.5). 모르는 테마 값은 미니멀로 본다.
+const THEME_KEYS = ['minimal', 'plaid', 'arc', 'twin', 'hud'];
+// 기본 테마 (24.5 추가 결정): 저장값이 없거나 목록 밖이면 플래드.
+export const DEFAULT_THEME = 'plaid';
+export function getTheme() {
+  const v = read('tsl_theme', DEFAULT_THEME);
+  return THEME_KEYS.includes(v) ? v : DEFAULT_THEME;
+}
+
+export function setTheme(t) {
+  return write('tsl_theme', THEME_KEYS.includes(t) ? t : DEFAULT_THEME);
+}
+
+export function getMirror() {
+  return read('tsl_mirror', '0') === '1';
+}
+
+export function setMirror(on) {
+  return write('tsl_mirror', on ? '1' : '0');
+}
+
 export function getSound() {
   const v = read(KEY.sound, 'off');
   return SOUND_KEYS.includes(v) ? v : 'off';

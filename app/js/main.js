@@ -10,7 +10,7 @@ import { createDemo, DEMO_HV } from './demo.js';
 import { createPlaid } from './plaid.js';
 import { APP_VERSION, APP_FILES } from './version.js';
 import { controllerChangeAction } from './update-policy.js';
-import { nextOrientMode, physicalOf, needsRotation, isOrientMode } from './orientation.js';
+import { nextOrientMode, needsRotation, isOrientMode, viewportBox, actualOrientation, rotationDecision } from './orientation.js';
 
 const SOUND_LABEL = {
   off: '음소거',
@@ -34,9 +34,9 @@ const state = {
   hv: null,
   trip: { startOdo: null, distKm: 0, maxSpeed: 0, maxKw: 0 },
   zero: { mode: 0, startMs: 0, text: '대기' },
-  theme: 'minimal',
-  mirror: false,
-  sound: settings.getSound(),
+  theme: settings.getTheme(), // §24.5: 저장값
+  mirror: settings.getMirror(),
+  sound: 'off', // §24.5: 시작 때는 항상 음소거 (저장된 음원을 복원하지 않는다)
   volume: settings.getVolume(),
   chime: settings.getChime(), // 기본 OFF (§16.2)
   wake: 'off', // 화면 켜짐 상태: unsupported | on | off (§16.3)
@@ -47,6 +47,8 @@ const state = {
   quit: false, // 종료 후 true: 연결·재생·GPS·화면 꺼짐 방지를 모두 막는다
   orient: settings.getOrient(), // 화면 방향 선택 (§19.3)
   lockOk: false, // 회전 잠금에 성공했는지
+  lockResult: 'na', // 진단용: 'ok' | 'fail' | 'na' (§24.3)
+  locking: false, // 잠금 요청 대기 중이면 회전을 다시 계산하지 않는다 (§24.2)
   blindLeft: false, // 사각지대 경보 (§19.5). 실제 176 파서에는 필드가 없어 데모만 켠다
   blindRight: false,
   sheet: null,
@@ -58,6 +60,7 @@ const ui = createUi();
 const audio = createAudio();
 audio.setChime(settings.getChime());
 const plaid = createPlaid(document.getElementById('plaid-canvas'));
+if (state.theme === 'plaid') plaid.start(); // §24.5: 저장된 테마가 플레이드면 시작 시 바로 그린다
 const demo = createDemo();
 let demoTimer = null;
 let lastCamSim = null;
@@ -312,8 +315,9 @@ function setSound(key) {
 
 function setTheme(t) {
   // 알 수 없는 값(삭제된 테마 포함)은 미니멀로
-  state.theme = THEMES.includes(t) ? t : 'minimal';
+  state.theme = THEMES.includes(t) ? t : settings.DEFAULT_THEME;
   t = state.theme;
+  settings.setTheme(t);
   if (t === 'plaid') plaid.start();
   else plaid.stop();
   ui.toast(`테마 변경: ${themeName(t)}`);
@@ -389,6 +393,7 @@ const ACTIONS = {
   },
   mirror: () => {
     state.mirror = !state.mirror;
+    settings.setMirror(state.mirror);
     ui.toast(state.mirror ? 'HUD 유리 반사 모드 켜짐' : 'HUD 유리 반사 모드 꺼짐');
     schedule();
   },
@@ -424,18 +429,13 @@ document.addEventListener('fullscreenchange', async () => {
   state.fullscreen = !!document.fullscreenElement;
   updateFullscreenClass();
   if (document.fullscreenElement) {
-    if (state.orient !== 'auto') {
-      try {
-        await screen.orientation.lock(state.orient);
-        state.lockOk = true;
-      } catch (e) {
-        state.lockOk = false;
-      }
-    }
+    if (state.orient !== 'auto') await lockTo(state.orient);
   } else {
+    cancelLock();
     state.lockOk = false;
+    state.lockResult = 'na';
   }
-  updateRotation();
+  requestRotation();
   schedule();
 });
 if (!document.fullscreenEnabled) {
@@ -512,7 +512,7 @@ document.addEventListener('tsl:test-chime', () => audio.playChime(true));
 setInterval(() => audio.tick(state.latest.speed, state.latest.pedal, state.latest.kw, Math.max(200, state.trip.maxKw)), 1000 / 60);
 
 async function boot() {
-  updateRotation();
+  requestRotation({ force: true });
   cam.start();
   syncWakeLock();
   schedule();
@@ -567,36 +567,129 @@ function quitApp() {
 
 document.getElementById('app-version').textContent = APP_VERSION;
 
-// ---- 화면 방향 (§19.3) --------------------------------------------------
+// ---- 화면 방향 (§19.3, §24) ---------------------------------------------
 // 자동/가로/세로. 잠금이 되면 그대로 두고, 안 되면 앱 루트를 CSS로 돌려 같은 모양을 낸다.
-function updateRotation() {
-  const phys = physicalOf(window.innerWidth, window.innerHeight);
-  const rot = needsRotation(state.orient, state.lockOk, phys);
-  document.getElementById('app').classList.toggle('rot', rot);
+// §24: 크기는 측정한 보이는 영역(--vw/--vh), 실제 방향은 screen.orientation 우선, 디바운스 400ms·쿨다운 1초.
+const ROT_DEBOUNCE_MS = 400;
+const ROT_COOLDOWN_MS = 1000;
+const rotTiming = { lastEventAt: null, lastChangeAt: null, timer: 0, box: null };
+const appEl = document.getElementById('app');
+const ORIENT_LABEL = { auto: '자동', landscape: '가로', portrait: '세로' };
+const LOCK_LABEL = { ok: '성공', fail: '실패', na: '해당 없음' };
+
+function measureBox() {
+  const vv = window.visualViewport;
+  const box = viewportBox({
+    vvWidth: vv && vv.width, vvHeight: vv && vv.height,
+    innerWidth: window.innerWidth, innerHeight: window.innerHeight,
+  });
+  document.documentElement.style.setProperty('--vw', `${box.w}px`);
+  document.documentElement.style.setProperty('--vh', `${box.h}px`);
+  rotTiming.box = box;
+  return box;
+}
+
+function wantRotation(box) {
+  const type = screen.orientation && screen.orientation.type;
+  const phys = actualOrientation({ type, width: box.w, height: box.h });
+  return needsRotation(state.orient, state.lockOk, phys);
+}
+
+// 방향 진단 한 줄 (§24.3): 요청 · 잠금 · 회전
+function renderOrientDiag() {
+  const el = document.getElementById('orient-diag');
+  if (!el) return;
+  const rot = appEl.classList.contains('rot');
+  el.textContent = `요청 ${ORIENT_LABEL[state.orient] || '자동'} · 잠금 ${LOCK_LABEL[state.lockResult] || '해당 없음'} · 회전 ${rot ? '적용' : '없음'}`;
+}
+
+// 입력(resize, fullscreenchange 등)은 다음 프레임에 측정하고 디바운스 뒤 판단한다. force(↻ 버튼, 부팅)는 즉시.
+function requestRotation({ force = false } = {}) {
+  if (force) {
+    measureBox();
+    clearTimeout(rotTiming.timer);
+    applyRotation(true);
+    return;
+  }
+  requestAnimationFrame(() => {
+    measureBox();
+    rotTiming.lastEventAt = performance.now();
+    scheduleRotation(ROT_DEBOUNCE_MS);
+  });
+}
+
+function scheduleRotation(delayMs) {
+  clearTimeout(rotTiming.timer);
+  rotTiming.timer = setTimeout(() => applyRotation(false), delayMs);
+}
+
+function applyRotation(force) {
+  rotTiming.timer = 0;
+  const now = performance.now();
+  const want = wantRotation(rotTiming.box || measureBox());
+  const d = rotationDecision({
+    now, lastEventAt: rotTiming.lastEventAt, lastChangeAt: rotTiming.lastChangeAt,
+    current: appEl.classList.contains('rot'), want, locking: state.locking, force,
+    debounceMs: ROT_DEBOUNCE_MS, cooldownMs: ROT_COOLDOWN_MS,
+  });
+  if (!d.apply) {
+    if (d.waitMs > 0) scheduleRotation(d.waitMs);
+    renderOrientDiag();
+    return;
+  }
+  appEl.classList.toggle('rot', want);
+  rotTiming.lastChangeAt = now;
+  renderOrientDiag();
   schedule();
 }
 
+// §24 진단: 잠금을 새로 건다. 이전 잠금을 먼저 풀어야 새 방향이 확실히 걸리고, 실패하면 잠금 상태를 정직하게 'fail'로 남긴다.
+// 잠금 대기 중에는 locking 이 true 라서 회전을 다시 계산하지 않는다.
+// 잠금 요청에 순번을 붙인다. 더 새 요청(또는 취소)이 있으면 늦게 끝난 이전 결과는 버린다 (§24.2 경쟁 방지).
+let lockSeq = 0;
+function cancelLock() {
+  lockSeq += 1;
+  state.locking = false;
+}
+async function lockTo(mode) {
+  const seq = ++lockSeq;
+  state.locking = true;
+  let ok = false;
+  try {
+    try { screen.orientation.unlock(); } catch (e) { /* 미지원 */ }
+    await screen.orientation.lock(mode);
+    ok = true;
+  } catch (e) {
+    ok = false;
+  }
+  if (seq !== lockSeq) return; // 더 새 요청이나 취소가 있었다
+  state.locking = false;
+  state.lockOk = ok;
+  state.lockResult = ok ? 'ok' : 'fail';
+}
+
 // 방향 버튼은 전체화면을 스스로 요청하지 않는다 (§21). 이미 전체화면이면 잠금을 시도하고,
-// 아니거나 실패하면 CSS 회전 대체(§19.3)로 간다.
+// 아니거나 실패하면 CSS 회전 대체(§19.3)로 간다. 버튼은 즉시 반영한다 (§24.2).
 async function applyOrient(mode) {
   if (!isOrientMode(mode)) return;
   state.orient = mode;
   settings.setOrient(mode);
+  cancelLock(); // 이전 잠금 요청의 늦은 결과는 무시한다
   state.lockOk = false;
+  state.lockResult = 'na';
   if (mode === 'auto') {
     try { screen.orientation.unlock(); } catch (e) { /* 미지원 */ }
   } else if (document.fullscreenElement) {
-    try {
-      await screen.orientation.lock(mode);
-      state.lockOk = true;
-    } catch (e) { /* 잠금 실패: CSS 회전으로 대체 */ }
+    await lockTo(mode); // 실패하면 CSS 회전으로 대체
   }
-  updateRotation();
+  requestRotation({ force: true });
+  schedule(); // 방향 아이콘·진단 줄 갱신
   ui.toast(mode === 'auto' ? '화면 방향: 자동' : `화면 방향: ${mode === 'landscape' ? '가로' : '세로'}`);
 }
 
-window.addEventListener('resize', updateRotation);
-window.addEventListener('orientationchange', updateRotation);
+window.addEventListener('resize', () => requestRotation());
+window.addEventListener('orientationchange', () => requestRotation());
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => requestRotation());
 
 // 실제 전체화면 여부 (§20.1, §21): html.is-fullscreen 은 document.fullscreenElement 가 있을 때만.
 // 홈 화면 앱(standalone)은 상단바 아래에서 시작하므로 브라우저 탭과 같은 규칙을 따른다.

@@ -14,7 +14,7 @@ export function createAudio() {
   let master = null;
   let bus = null;
   let readyPromise = null;
-  let profile = 'off';
+  let profile = 'off'; // §24.5: 앱을 열면 항상 음소거로 시작한다 (저장된 음원은 복원하지 않는다)
   let ev = null;
   let v10Player = null;
   let v10Promise = null;
@@ -114,8 +114,7 @@ export function createAudio() {
   async function setProfile(key) {
     if (closed) return;
     if (!SOUND_PROFILES.includes(key)) return;
-    profile = key;
-    settings.setSound(key);
+    profile = key; // §24.5: 사운드 선택은 저장하지 않는다 (앱을 켠 동안만 유지)
     document.documentElement.dataset.sound = key;
     stopAll();
     if (key === 'off') {

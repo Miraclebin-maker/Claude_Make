@@ -286,6 +286,12 @@ async function main() {
       try { await ctx.grantPermissions(['screen-wake-lock']); } catch (e) { /* 이 빌드에 없는 권한 이름 */ }
       const page = await ctx.newPage();
       // 회전 잠금을 거부해 CSS 회전 대체 경로를 탄다 (헤드리스는 잠금이 빈 동작으로 성공하므로, §19.3)
+      // 헤드리스는 화면 방향이 가로로 고정이라, 기기처럼 보이는 창 크기를 따르도록 모의한다 (§24: screen.orientation.type 우선)
+      await page.addInitScript(() => {
+        try {
+          Object.defineProperty(screen.orientation, 'type', { get: () => (innerWidth > innerHeight ? 'landscape-primary' : 'portrait-primary'), configurable: true });
+        } catch (e) { /* 미지원 */ }
+      });
       await page.addInitScript(() => {
         try {
           Object.defineProperty(screen.orientation, 'lock', { value: () => Promise.reject(new DOMException('blocked', 'NotSupportedError')), configurable: true });
@@ -339,7 +345,7 @@ async function main() {
           Object.defineProperty(screen.orientation, 'lock', { value: () => Promise.resolve(), configurable: true });
         });
         await page.click('#btn-fs'); // 진입
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(1500); // 쿨다운(1초) 뒤에 반영된다 (§24.2)
         const lockedIn = await page.evaluate(() => ({ fs: !!document.fullscreenElement, rot: document.getElementById('app').classList.contains('rot') }));
         check(`${vpTag} 전체화면 진입 때 저장된 가로 방향 잠금 성공 -> CSS 회전 해제 (§21)`,
           rotBefore && lockedIn.fs && !lockedIn.rot, `before=${rotBefore} fs=${lockedIn.fs} rot=${lockedIn.rot}`);
@@ -350,6 +356,119 @@ async function main() {
         await page.click('#btn-orient'); // 가로 -> 세로
         await page.click('#btn-orient'); // 세로 -> 자동
         await page.waitForTimeout(200);
+      }
+
+      // §24 강제 회전 안정화: 세로 화면에서 가로 강제 + 전체화면 (잠금 거부). 보이는 영역이 dvh 와 달라도 요소가 화면 안에 있어야 한다
+      if (vp.w === 390 && vp.h === 844) {
+        // 앞 검사에서 잠금을 성공으로 모의했으므로 다시 거부로 되돌린다 (잠금 실패 -> CSS 회전 유지 경로)
+        await page.evaluate(() => {
+          Object.defineProperty(screen.orientation, 'lock', { value: () => Promise.reject(new DOMException('blocked', 'NotSupportedError')), configurable: true });
+        });
+        await page.click('#btn-orient'); // 자동 -> 가로 (전체화면 밖: CSS 회전)
+        await page.waitForTimeout(500);
+        await page.click('#btn-fs');
+        await page.waitForFunction(() => !!document.fullscreenElement, null, { timeout: 3000 }).catch(() => {});
+        await page.waitForTimeout(500);
+        // 보이는 영역을 dvh 와 다르게 (높이 700) 설정하고 resize 를 알린다
+        await page.evaluate(() => {
+          Object.defineProperty(window, 'visualViewport', { configurable: true, value: { width: 390, height: 700, addEventListener() {}, removeEventListener() {} } });
+          window.dispatchEvent(new Event('resize'));
+        });
+        await page.waitForTimeout(1300);
+        const geo = await page.evaluate(() => {
+          const box = { w: 390, h: 700 };
+          const r = (el) => { const b = el.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom, ok: b.width > 0 && b.height > 0 }; };
+          const sel = ['#btn-conn', '#val-soc', '.dock > [data-act="info"]', '#btn-orient', '#btn-fs', '.dock > [data-act="settings"]', '#btn-exit'];
+          const items = sel.map((q) => { const el = document.querySelector(q); return { q, ...(el ? r(el) : { ok: false }) }; });
+          const inside = (it) => it.ok && it.l >= -0.5 && it.t >= -0.5 && it.r <= box.w + 0.5 && it.b <= box.h + 0.5;
+          return {
+            rot: document.getElementById('app').classList.contains('rot'),
+            fs: !!document.fullscreenElement,
+            vw: document.documentElement.style.getPropertyValue('--vw'),
+            vh: document.documentElement.style.getPropertyValue('--vh'),
+            outside: items.filter((it) => !inside(it)).map((it) => it.q),
+            diag: document.getElementById('orient-diag').textContent,
+          };
+        });
+        check(`${vpTag} 가로 강제+전체화면: 상태줄·하단 버튼이 보이는 영역 안 (§24.4)`, geo.rot && geo.outside.length === 0, `rot=${geo.rot} vw=${geo.vw} vh=${geo.vh} outside=${geo.outside.join(',') || 'none'}`);
+        check(`${vpTag} 설정 방향 진단 한 줄: 요청·잠금·회전 (§24.3)`, geo.diag.includes('요청 가로') && geo.diag.includes('회전 적용'), geo.diag);
+
+        // 흔들림: resize 를 100ms 간격으로 10번 쏘고 방향 값을 번갈아 바꿔도 .rot 토글은 1번 이하
+        await page.evaluate(() => {
+          window.__rotFlips = 0;
+          const el = document.getElementById('app');
+          let last = el.classList.contains('rot');
+          window.__rotObs = new MutationObserver(() => {
+            const now = el.classList.contains('rot');
+            if (now !== last) { window.__rotFlips += 1; last = now; }
+          });
+          window.__rotObs.observe(el, { attributes: true, attributeFilter: ['class'] });
+          return new Promise((resolve) => {
+            let i = 0;
+            const tick = () => {
+              const flip = i % 2 === 0;
+              Object.defineProperty(window, 'visualViewport', { configurable: true, value: { width: flip ? 390 : 700, height: flip ? 700 : 390, addEventListener() {}, removeEventListener() {} } });
+              window.dispatchEvent(new Event('resize'));
+              i += 1;
+              if (i < 10) setTimeout(tick, 100); else resolve();
+            };
+            tick();
+          });
+        });
+        await page.waitForTimeout(800);
+        const flips = await page.evaluate(() => { window.__rotObs.disconnect(); return window.__rotFlips; });
+        await page.evaluate(() => { delete window.visualViewport; window.dispatchEvent(new Event('resize')); }); // 모의 보이는 영역 해제
+        check(`${vpTag} resize 10번 (100ms 간격): .rot 토글 1번 이하 (§24.4)`, flips <= 1, `flips=${flips}`);
+
+        // 원래대로: 전체화면 해제, 방향 자동
+        await page.click('#btn-fs');
+        await page.waitForTimeout(1300);
+        for (let k = 0; k < 3; k++) {
+          const isAuto = await page.evaluate(() => localStorage.getItem('tsl_orient') === 'auto');
+          if (isAuto) break;
+          await page.click('#btn-orient');
+          await page.waitForTimeout(150); // 아이콘 갱신(렌더)을 기다린다
+        }
+        await page.waitForTimeout(300);
+      }
+
+      // §24.5 설정 유지: 테마·HUD 반전·음원을 바꾼 뒤 새로고침(reload)해도 그대로이고, 첫 클릭 뒤 음원이 running 으로 시작한다
+      if (vp.w === 390 && vp.h === 844) {
+        await page.click('.dock [data-act="settings"]');
+        await page.click('#sheet-settings button[data-theme="twin"]');
+        await page.click('#sheet-settings [data-act="mirror"]');
+        await page.click('#sheet-settings button[data-sound="v10"]');
+        await page.waitForFunction(() => document.documentElement.dataset.v10 === 'ready', null, { timeout: 25000 });
+        await page.locator('#sheet-settings [data-act="close"]').first().click();
+        await page.waitForTimeout(300);
+        await page.reload();
+        await page.waitForSelector('#cluster', { state: 'attached' }); // 쌍둥이 테마는 속도 칸이 다르게 보일 수 있어 존재만 본다
+        await page.waitForTimeout(500);
+        const kept = await page.evaluate(() => ({
+          theme: document.documentElement.dataset.theme,
+          mirror: localStorage.getItem('tsl_mirror'),
+          sound: localStorage.getItem('tsl_sound_profile'),
+          cluster: document.getElementById('cluster').classList.contains('mirror'),
+        }));
+        check(`${vpTag} 새로고침 뒤 테마 twin·HUD 반전 유지 (§24.5)`,
+          kept.theme === 'twin' && kept.mirror === '1' && kept.cluster,
+          `theme=${kept.theme} mirror=${kept.mirror} cluster=${kept.cluster}`);
+        // 음원은 복원하지 않는다: 음소거로 시작, 첫 클릭 뒤에도 running 이 되면 안 된다
+        const soundOff = await page.evaluate(() => ({ audio: document.documentElement.dataset.audioState || 'none' }));
+        await page.click('#cluster');
+        await page.waitForTimeout(800);
+        const firstTap = await page.evaluate(() => document.documentElement.dataset.audioState || 'none');
+        check(`${vpTag} 새로고침 뒤 음원은 음소거로 시작, 첫 클릭해도 running 아님 (§24.5)`,
+          firstTap !== 'running' && (soundOff.audio === 'none' || soundOff.audio === 'suspended'), `before=${soundOff.audio} afterTap=${firstTap}`);
+        // 원래대로 되돌린다: 음소거, 반전 끔, 미니멀
+        await page.click('.dock [data-act="settings"]');
+        await page.click('#sheet-settings button[data-sound="off"]');
+        await page.click('#sheet-settings button[data-theme="minimal"]');
+        await page.click('#sheet-settings [data-act="mirror"]');
+        const restored = await page.evaluate(() => ({ theme: localStorage.getItem('tsl_theme'), mirror: localStorage.getItem('tsl_mirror'), sound: localStorage.getItem('tsl_sound_profile') }));
+        check(`${vpTag} 원래대로 되돌림: 테마 미니멀, 반전 끔, 사운드 미저장 (§24.5)`, restored.theme === 'minimal' && restored.mirror === '0' && restored.sound === null, JSON.stringify(restored));
+        await page.locator('#sheet-settings [data-act="close"]').first().click();
+        await page.waitForTimeout(300);
       }
 
       // §16.2 경고음 기본 OFF (저장값 없음), §16.3 화면 켜짐 상태 표시
@@ -501,6 +620,11 @@ async function main() {
 
         check(`${tag} 콘솔 에러 0`, errors.length === 0, errors.slice(0, 3).join(' | '));
       }
+      // 테마 저장(§24.5) 때문에 뒤의 새로고침 검사가 마지막 테마로 시작하지 않도록 미니멀로 되돌린다
+      await page.click('.dock [data-act="settings"]');
+      await page.click('#sheet-settings button[data-theme="minimal"]');
+      await page.click('#sheet-settings .x');
+      await page.waitForTimeout(200);
 
       // 음원 4종: 클릭 -> 저장값 -> 선택 표시가 모두 반영되는지. V10 은 루프 17개 디코드까지 기다린다 (§18.3)
       await page.click('.dock [data-act="settings"]');
@@ -542,7 +666,7 @@ async function main() {
           on: document.querySelector(`#sheet-settings button[data-sound="${k}"]`).classList.contains('on'),
           audio: document.documentElement.dataset.audio || '',
         }), key);
-        check(`${vpTag} 음원 ${key}: 저장값과 선택 표시 반영`, st.saved === key && st.on, `saved=${st.saved} on=${st.on}`);
+        check(`${vpTag} 음원 ${key}: 선택 표시 반영 (§24.5: 저장하지 않음)`, st.on && st.saved === null, `saved=${st.saved} on=${st.on}`);
         if (key !== 'off') check(`${vpTag} 음원 ${key}: 오디오 상태 error 아님`, st.audio !== 'error', `audio=${st.audio}`);
       }
 
@@ -588,7 +712,7 @@ async function main() {
           hits,
         };
       });
-      check(`${vpTag} 설정: 버전 표시 2.7.0`, appLayout.version === '2.7.0', appLayout.version);
+      check(`${vpTag} 설정: 버전 표시 2.8.0`, appLayout.version === '2.8.0', appLayout.version);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 시트 안에 보임`, appLayout.refreshIn && appLayout.quitIn,
         `refresh ${appLayout.refreshIn} quit ${appLayout.quitIn}`);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 서로·다른 버튼과 겹치지 않음`, !appLayout.sameRowHit && appLayout.hits.length === 0,
@@ -636,6 +760,8 @@ async function main() {
 
       // §19.3 화면 방향 전환 버튼: 자동 → 가로 → 세로 → 자동. 잠금이 안 되면 앱 루트를 CSS로 돌린다.
       // 가로 강제 (실기기가 세로일 때): 레이아웃 박스가 가로형, 화면 안에 보임, 가로 SVG 규칙 적용, 설정 시트가 열린다
+      // 가로 SVG 규칙 검사는 hud 테마에서 한다 (앞 단계의 테마 저장 §24.5 뒤 미니멀이므로 명시적으로 고른다)
+      await page.click('#sheet-settings button[data-theme="hud"]');
       await page.click('#sheet-settings .x');
       await page.click('#btn-orient'); // 자동 -> 가로
       await page.waitForTimeout(400);
@@ -661,6 +787,7 @@ async function main() {
       await page.click('.dock [data-act="settings"]');
       await page.waitForTimeout(200);
       check(`${vpTag} 방향 가로: 설정 시트 열림`, await page.evaluate(() => !document.getElementById('sheet-settings').hidden));
+      await page.click('#sheet-settings button[data-theme="minimal"]'); // hud 검사 뒤 미니멀로 되돌린다
       await page.click('#sheet-settings .x');
       // 세로 강제 (실기기가 가로일 때 세로 요청) 및 자동 복귀
       await page.click('#btn-orient'); // 가로 -> 세로
@@ -688,8 +815,8 @@ async function main() {
           saved: localStorage.getItem('tsl_sound_profile'),
           keys: await caches.keys(),
         }));
-        check('새로고침: 설정 유지 (사운드 v10 저장값)', after.saved === 'v10', `saved=${after.saved}`);
-        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.7.0'),
+        check('새로고침: 사운드 선택은 저장하지 않음 (§24.5)', after.saved === null, `saved=${after.saved}`);
+        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.8.0'),
           after.keys.join(', ') || 'none');
 
         // §15.3 종료: 모든 기능 정지, 오버레이 표시, 다시 시작으로 정상 복귀

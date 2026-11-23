@@ -60,10 +60,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
   position: fixed;
   top: 0;
   left: 0;
-  width: 100dvh;
-  height: 100dvw;
+  /* §24.1: 크기는 JS가 측정한 실제 보이는 영역(--vw/--vh). 측정 전에는 dvh/dvw로 대신한다 */
+  width: var(--vh, 100dvh);
+  height: var(--vw, 100dvw);
   transform-origin: 0 0;
-  transform: translateX(100dvw) rotate(90deg);
+  transform: translateX(var(--vw, 100dvw)) rotate(90deg);
 }
 
 /* ---- 플래드 캔버스 ----------------------------------------------------- */
