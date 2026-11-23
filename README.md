@@ -72,3 +72,10 @@ V10 루프 다시 만들기 (WAV 를 바꿀 때만):
 
 - 모듈로 보내는 타입은 `ALLOWED_TX_TYPES` (160, 168, 176, 208)뿐이다. 그 외 타입은 `encodePacket` 이 throw 한다.
 - 차량 프로필 변경(FSD) 명령은 제거했다. 카메라 기능은 배너와 경고음만 낸다.
+
+## 테스트 APK (Capacitor, §23)
+
+- GitHub Actions `Test APK (Capacitor)` 워크플로가 디버그 APK를 만들어 아티팩트 `tsl-cluster-debug-apk`로 올린다 (보존 14일).
+- 디버그 서명 키는 빌드마다 달라서, 새 APK를 설치하기 전에 이전 테스트 APK를 지워야 할 수 있다.
+- 네이티브 셸에서는 `app/js/ble-native.js`(플러그인 `@capacitor-community/bluetooth-le`)가 Web Bluetooth 대신 쓰이고, 서비스 워커와 "새로고침" 버튼은 쓰지 않는다.
+- 로컬 설치: `npm ci` (Android SDK가 없으면 APK 빌드는 CI에서만 한다).

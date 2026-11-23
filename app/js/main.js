@@ -1,5 +1,6 @@
 // 진입점: 상태 보관, 모듈 연결, 이벤트 바인딩, 트립/0-100 로직, 화면 꺼짐 방지.
 import { TslBle } from './ble.js';
+import { TslBleNative, isNativeApp } from './ble-native.js';
 import { parseTelemetry176, parseHvPack208 } from './protocol.js';
 import * as settings from './settings.js';
 import { createUi, themeName } from './ui.js';
@@ -88,7 +89,9 @@ const cam = createCameraWatch({
 });
 state.cam.count = cam.count();
 
-const ble = new TslBle({ guard: () => !state.demo });
+// 네이티브 셸(Capacitor 테스트 APK)에서는 플러그인 전송 계층, 브라우저에서는 Web Bluetooth (§23.2)
+const native = isNativeApp();
+const ble = native ? new TslBleNative({ guard: () => !state.demo }) : new TslBle({ guard: () => !state.demo });
 
 // ---- BLE 상태 / 패킷 ----------------------------------------------------
 ble.onState((st, name) => {
@@ -523,6 +526,7 @@ async function boot() {
 // ---- 버전·캐시 (§15.1, §15.2) ------------------------------------------
 // 새로고침 버튼: 서비스워커 해제, 캐시 전부 삭제, 파일을 HTTP 캐시까지 새로 받고, 다시 로드한다. 설정(localStorage)은 유지.
 async function refreshApp() {
+  if (native) { ui.toast('APK를 새로 설치하세요 (테스트 빌드, §23.4)'); return; }
   ui.toast('최신 버전을 불러옵니다');
   setTimeout(async () => {
     try {
@@ -642,7 +646,7 @@ updateFullscreenClass();
   btn.addEventListener('pointerleave', cancel);
 })();
 
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && !native) { // 네이티브: 앱 파일이 APK 안에 있으므로 워커를 쓰지 않는다 (§23.4)
   // 설정 파일을 HTTP 캐시에서 읽지 않도록 워커 스크립트를 항상 서버에서 확인한다.
   const hadController = !!navigator.serviceWorker.controller;
   let swReloaded = false;

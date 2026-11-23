@@ -1,0 +1,50 @@
+name: Test APK (Capacitor)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/exciting-curie-loguy7]
+    paths:
+      - 'app/**'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Capacitor 8 의 안드로이드 모듈은 Java 21 로 컴파일한다
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npx cap add android
+      - run: npx cap sync android
+      - name: versionName 을 웹 APP_VERSION 과 맞춘다
+        run: |
+          VER=$(node -e "import('./app/js/version.js').then((m) => process.stdout.write(m.APP_VERSION))")
+          echo "versionName $VER"
+          sed -i "s/versionName \"[^\"]*\"/versionName \"$VER\"/" android/app/build.gradle
+          grep -n 'versionName' android/app/build.gradle
+      - name: 디버그 APK 빌드
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tsl-cluster-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+          if-no-files-found: error

@@ -11,6 +11,7 @@ export const APP_FILES = [
   './js/main.js',
   './js/protocol.js',
   './js/ble.js',
+  './js/ble-native.js',
   './js/ui.js',
   './js/settings.js',
   './js/camera.js',
