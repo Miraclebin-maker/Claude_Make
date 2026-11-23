@@ -601,3 +601,37 @@ Capacitor/APK 빌드, 차량 쓰기 기능 일체, 새 데이터 필드 파싱, 
 
 ### 22.3 남은 한계 (사용자 판단 대기)
 - 배기음이 켜져 있는 동안은 웹 페이지가 안드로이드에 "음악과 섞어 재생" 또는 "음악 소리만 줄이기"를 요청할 방법이 없어, 음악 앱과 동시 재생이 보장되지 않는다. 동시 재생이 필요하면 APK(네이티브) 전환 시 오디오 포커스 설정으로 해결한다.
+
+## 23. 테스트용 APK (Capacitor) — 1차
+
+목적: 웹 앱의 한계 두 가지를 실기기에서 확인한다. (1) 블루투스 **자동 연결**(웹은 브라우저 제약), (2) 배기음과 **휴대폰 음악 동시 재생**(웹은 오디오 포커스 제어 불가). 정식 배포가 아니라 사이드로드용 테스트 빌드.
+
+### 23.1 빌드 위치와 방식
+- 이 개발 환경은 안드로이드 SDK 다운로드(dl.google.com)가 막혀 있으므로 **GitHub Actions에서 빌드**한다. 생성된 안드로이드 프로젝트(`android/`)는 저장소에 넣지 않고 CI에서 매번 만든다.
+- 저장소에 추가: 루트 `package.json`에 `@capacitor/core`, `@capacitor/cli`, `@capacitor/android`, `@capacitor-community/bluetooth-le`(버전 고정), `capacitor.config.json`(`appId: "io.github.miraclebinmaker.tslcluster"`, `appName: "TSL 계기판"`, `webDir: "app"`).
+- 새 워크플로 `.github/workflows/android.yml`: `workflow_dispatch` + `push`(경로 `app/**`, `capacitor.config.json`, `package.json`, 워크플로 자체). 단계: Node·Java 17 설정 → `npm ci` → `npx cap add android` → `npx cap sync android` → `cd android && ./gradlew assembleDebug` → APK를 아티팩트 `tsl-cluster-debug-apk`로 업로드(보존 14일). 기존 Pages 워크플로와 독립(APK 빌드 실패가 사이트 배포를 막지 않음).
+- 서명: 디버그 서명(CI 매번 새 키). 그래서 새 빌드를 설치할 때 **이전 테스트 APK를 지우고 설치**해야 할 수 있다(README에 안내). 키 고정은 2차에서.
+- 웹 버전 번호(`APP_VERSION`)와 같은 값을 안드로이드 `versionName`으로 넣는다(가능하면 CI에서 `version.js`를 읽어 설정, 어려우면 생략하고 보고).
+
+### 23.2 블루투스: 네이티브 전송 계층
+- WebView에는 Web Bluetooth가 없다. `app/js/ble-native.js`를 만들어 **`ble.js`와 같은 외부 인터페이스**(`connect, disconnect, shutdown, autoConnect, send, sendPassword, onPacket, onState, isConnected`)를 제공한다. `main.js`는 `window.Capacitor?.isNativePlatform?.()`이면 네이티브, 아니면 기존 웹 구현을 쓴다.
+- 플러그인 접근은 번들러 없이 `window.Capacitor.Plugins.BluetoothLe`(원시 플러그인 API)로 한다. 메서드·인자 형식(예: 값의 16진 문자열 표기, 알림 리스너 이벤트 이름)은 설치된 패키지의 소스/타입 정의를 **읽어서** 맞춘다.
+- **읽기 전용 원칙 동일**: 모든 송신은 `protocol.js`의 `encodePacket`(화이트리스트)을 거친다. 쓰기 호출은 `ble-native.js` 한 곳에만.
+- 연결 흐름: 최초 연결은 플러그인의 기기 선택(`requestDevice`, 서비스 UUID 필터) → 연결 → 알림 구독 → 기존과 같은 시작 시퀀스(168 → 160 → 176 구독, 1초마다 176). `deviceId`를 저장.
+- **자동 연결(네이티브 장점)**: 앱 시작 시 저장된 `deviceId`로 사용자 탭 없이 바로 `connect` 시도. 실패하면 10초 간격 재시도(앱이 보이는 동안), 끊기면 기존과 같은 1/2/4/8/15초 재연결. 웹 버전의 "탭하면 연결" 힌트는 네이티브에서는 저장된 기기가 없을 때만.
+- 권한: 플러그인 `initialize`로 안드로이드 12+ 블루투스 권한(스캔·연결) 요청. 위치 권한은 플러그인 요구가 있을 때만.
+- 수신 데이터는 기존 `PacketDecoder`로 처리(웹과 동일 파서).
+
+### 23.3 오디오
+- 1차에서는 **코드 변경 없이** WebView의 Web Audio로 재생하고, 실기기에서 음악 동시 재생 여부를 관찰한다(WebView가 오디오 포커스를 어떻게 다루는지 확인용). 결과에 따라 2차에서 네이티브 오디오 설정을 검토.
+- §22(소리 없을 때 suspend)는 APK에도 그대로 적용된다.
+
+### 23.4 웹 전용 기능 처리
+- 서비스워커: 네이티브에서는 등록하지 않는다(앱 파일이 APK 안에 있음).
+- "최신 버전으로 새로고침" 버튼: 네이티브에서는 숨기거나 "APK를 새로 설치하세요" 안내로 대체.
+- 전체화면·방향 버튼: WebView에서도 Fullscreen API와 `screen.orientation`이 동작하면 그대로, 아니면 기존 CSS 회전 대체 경로.
+- 공공데이터 링크: 외부 브라우저로 열림(기본 동작)이면 충분.
+
+### 23.5 검증
+- 로컬: `npm test`에 `ble-native` 단위 테스트(가짜 플러그인 객체로: 화이트리스트 외 타입 송신 시 throw, 패킷이 16진 문자열 등 플러그인 형식으로 정확히 변환, 알림 수신 → PacketDecoder → onPacket, 시작 시퀀스 순서, 자동 연결 재시도·재연결 백오프, 수동 해제 후 재연결 안 함). 기존 웹 스모크 전부 통과(웹 동작 변화 없음).
+- CI: `android.yml` 실행 성공과 아티팩트에 `.apk` 존재. (실기기 동작은 사용자 테스트)
