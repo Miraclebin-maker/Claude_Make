@@ -4,6 +4,7 @@ import { startEv } from './ev.js';
 import { createRpmModel, stepRpm } from './rpm-model.js';
 import { loadV10Buffers, createV10Graph } from './v10.js';
 import * as settings from '../settings.js';
+import { audioStateFor, unlockWanted, CHIME_HOLD_MS } from './audio-state.js';
 
 export const SOUND_PROFILES = Object.freeze(['off', 'zimmer', 'plaid', 'v10']);
 const V10_BASE = new URL('../../audio/v10/', import.meta.url);
@@ -24,11 +25,26 @@ export function createAudio() {
   let previewStep = 0;
   let lastTickMs = 0;
   let closed = false; // close() 이후 true: 어떤 재생도 다시 시작하지 않는다
+  let pageHidden = typeof document !== 'undefined' && document.hidden;
+  let chimeBusy = false; // 경고음이 울리는 동안 true (§22: 음소거 상태에서도 잠깐 running)
+  let chimeTimer = 0;
 
   const volumeGain = () => (volume / 100) * 0.8;
 
   function setStatus(s) {
     document.documentElement.dataset.audio = s;
+  }
+
+  function setAudioState(s) {
+    document.documentElement.dataset.audioState = s;
+  }
+
+  // §22: 필요 없으면 suspend, 필요하면 resume. 상태 결정은 audio-state.js 가 한다.
+  function applyState() {
+    if (!ctx || closed) return;
+    const want = audioStateFor({ profile, hidden: pageHidden, chimeBusy });
+    if (want === 'running' && ctx.state !== 'running') ctx.resume().catch(() => {});
+    else if (want === 'suspended' && ctx.state === 'running') ctx.suspend().catch(() => {});
   }
 
   function setV10Status(s) {
@@ -52,6 +68,9 @@ export function createAudio() {
         master.gain.value = volumeGain();
         bus.connect(master);
         master.connect(ctx.destination);
+        // close() 가 ctx 를 먼저 비우므로 이벤트 대상(e.target)에서 상태를 읽는다
+        ctx.onstatechange = (e) => setAudioState(e.target.state);
+        setAudioState(ctx.state);
         setStatus('ready');
       })().catch((err) => {
         setStatus('error');
@@ -60,8 +79,7 @@ export function createAudio() {
       });
     }
     await readyPromise;
-    // 자동재생 정책으로 suspended 일 수 있다. 제스처 이후 재개를 시도하되 기다리지 않는다.
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    applyState();
   }
 
   // V10 루프 17개 로드·디코드 (한 번만). 실패하면 다음 선택 때 다시 시도한다.
@@ -100,7 +118,10 @@ export function createAudio() {
     settings.setSound(key);
     document.documentElement.dataset.sound = key;
     stopAll();
-    if (key === 'off') return;
+    if (key === 'off') {
+      applyState(); // §22: 음소거하면 컨텍스트를 놓는다
+      return;
+    }
     try {
       await ensureContext();
       if (key === 'v10') {
@@ -163,6 +184,13 @@ export function createAudio() {
   // 경고음 (상승 2음). force 면 설정과 무관하게 재생(테스트 용도).
   function playChime(force = false) {
     if (!chimeOn && !force) return;
+    // §22: 경고음이 울리는 동안만 깨운다. 끝난 뒤 음소거 상태면 applyState 가 다시 suspend 한다.
+    chimeBusy = true;
+    clearTimeout(chimeTimer);
+    chimeTimer = setTimeout(() => {
+      chimeBusy = false;
+      applyState();
+    }, CHIME_HOLD_MS);
     ensureContext().then(() => {
       const t = ctx.currentTime;
       [587.33, 880].forEach((freq, idx) => {
@@ -187,11 +215,18 @@ export function createAudio() {
     setVolume,
     setChime,
     playChime,
+    // 페이지 숨김/표시(visibilitychange). 숨기면 suspend, 보이면 프로필이 켜져 있을 때만 resume.
+    setPageHidden(h) {
+      pageHidden = !!h;
+      applyState();
+    },
     get profile() { return profile; },
     // 앱 종료: 노드를 멈추고 컨텍스트를 닫는다. 이후 재생은 모두 무시된다.
     async close() {
       closed = true;
       previewing = false;
+      clearTimeout(chimeTimer);
+      chimeBusy = false;
       stopAll();
       profile = 'off';
       const c = ctx;
@@ -201,6 +236,7 @@ export function createAudio() {
       readyPromise = null;
       v10Promise = null;
       setStatus('closed');
+      setAudioState('closed');
       if (c) {
         try { await c.close(); } catch (e) { /* 이미 닫힘 */ }
       }
@@ -209,13 +245,14 @@ export function createAudio() {
     get chimeOn() { return chimeOn; },
     // 사용자 활성화 이벤트(click 등)마다 호출. 컨텍스트가 없으면 저장된 프로필로 만들고,
     // suspended 이면 재개를 시도한다.
+    // §22: 프로필이 off 면 컨텍스트를 만들거나 재개하지 않는다.
     unlock() {
-      if (closed) return;
+      if (!unlockWanted({ profile, closed })) return;
       if (ctx) {
-        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+        applyState();
         return;
       }
-      if (settings.getSound() !== 'off') setProfile(settings.getSound());
+      setProfile(profile);
     },
   };
 }

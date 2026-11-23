@@ -518,6 +518,23 @@ async function main() {
           await page.waitForTimeout(200);
           const pv = await page.evaluate(() => document.documentElement.dataset.audio || '');
           check(`${vpTag} V10: 미리듣기 누르고 떼기 오류 없음`, pv !== 'error', `audio=${pv}`);
+          // §22: 켜져 있고 보이면 running, 숨기면 suspended, 다시 보이면 running
+          const onSt = await page.evaluate(() => document.documentElement.dataset.audioState || '');
+          check(`${vpTag} V10 켬: AudioContext running (§22)`, onSt === 'running', `audioState=${onSt}`);
+          await page.evaluate(() => {
+            Object.defineProperty(document, 'hidden', { get: () => true, configurable: true });
+            document.dispatchEvent(new Event('visibilitychange'));
+          });
+          await page.waitForTimeout(300);
+          const hidSt = await page.evaluate(() => document.documentElement.dataset.audioState || '');
+          check(`${vpTag} 페이지 숨김: AudioContext suspended (§22)`, hidSt === 'suspended', `audioState=${hidSt}`);
+          await page.evaluate(() => {
+            delete document.hidden;
+            document.dispatchEvent(new Event('visibilitychange'));
+          });
+          await page.waitForTimeout(300);
+          const shownSt = await page.evaluate(() => document.documentElement.dataset.audioState || '');
+          check(`${vpTag} 다시 보임: 소리 켜짐이면 running (§22)`, shownSt === 'running', `audioState=${shownSt}`);
         }
         await page.waitForTimeout(250);
         const st = await page.evaluate((k) => ({
@@ -528,6 +545,26 @@ async function main() {
         check(`${vpTag} 음원 ${key}: 저장값과 선택 표시 반영`, st.saved === key && st.on, `saved=${st.saved} on=${st.on}`);
         if (key !== 'off') check(`${vpTag} 음원 ${key}: 오디오 상태 error 아님`, st.audio !== 'error', `audio=${st.audio}`);
       }
+
+      // §22 음소거: 마지막 선택이 off. 1초 안에 suspended, 화면을 여러 번 눌러도 suspended 유지
+      await page.waitForTimeout(1000);
+      const offSt = await page.evaluate(() => document.documentElement.dataset.audioState || '');
+      check(`${vpTag} 음소거: 1초 안에 AudioContext suspended (§22)`, offSt === 'suspended', `audioState=${offSt}`);
+      await page.locator('#sheet-settings [data-act="close"]').first().click();
+      await page.waitForTimeout(300);
+      for (let i = 0; i < 3; i++) await page.click('#cluster');
+      await page.waitForTimeout(200);
+      const tapSt = await page.evaluate(() => document.documentElement.dataset.audioState || '');
+      check(`${vpTag} 음소거 상태에서 화면을 눌러도 suspended 유지 (§22)`, tapSt === 'suspended', `audioState=${tapSt}`);
+      // 경고음 강제 재생: 잠깐 running, 재생 끝 0.3 초 뒤 다시 suspended
+      await page.evaluate(() => document.dispatchEvent(new CustomEvent('tsl:test-chime')));
+      await page.waitForTimeout(80);
+      const chimeSt = await page.evaluate(() => document.documentElement.dataset.audioState || '');
+      await page.waitForTimeout(1200);
+      const afterChime = await page.evaluate(() => document.documentElement.dataset.audioState || '');
+      check(`${vpTag} 음소거 상태 경고음: 잠깐 running 후 suspended (§22)`, chimeSt === 'running' && afterChime === 'suspended', `during=${chimeSt} after=${afterChime}`);
+      await page.click('.dock [data-act="settings"]'); // 뒤의 앱 섹션 검사를 위해 설정 시트를 다시 연다
+      await page.waitForTimeout(300);
 
       // §15.1/15.2/15.3: 설정 시트 "앱" 섹션 — 버전, 새로고침, 종료 버튼이 보이고 다른 버튼과 겹치지 않는다
       const appBtn = page.locator('[data-act="refresh-app"]');
@@ -551,7 +588,7 @@ async function main() {
           hits,
         };
       });
-      check(`${vpTag} 설정: 버전 표시 2.6.0`, appLayout.version === '2.6.0', appLayout.version);
+      check(`${vpTag} 설정: 버전 표시 2.7.0`, appLayout.version === '2.7.0', appLayout.version);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 시트 안에 보임`, appLayout.refreshIn && appLayout.quitIn,
         `refresh ${appLayout.refreshIn} quit ${appLayout.quitIn}`);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 서로·다른 버튼과 겹치지 않음`, !appLayout.sameRowHit && appLayout.hits.length === 0,
@@ -652,7 +689,7 @@ async function main() {
           keys: await caches.keys(),
         }));
         check('새로고침: 설정 유지 (사운드 v10 저장값)', after.saved === 'v10', `saved=${after.saved}`);
-        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.6.0'),
+        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.7.0'),
           after.keys.join(', ') || 'none');
 
         // §15.3 종료: 모든 기능 정지, 오버레이 표시, 다시 시작으로 정상 복귀

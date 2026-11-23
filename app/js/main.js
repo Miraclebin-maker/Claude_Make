@@ -498,7 +498,11 @@ document.getElementById('cam-file').addEventListener('change', (e) => {
 
 document.addEventListener('visibilitychange', () => {
   syncWakeLock(); // 보이면 요청, 숨겨지면 해제 (§16.3)
+  audio.setPageHidden(document.hidden); // 숨기면 오디오 suspend (§22)
 });
+
+// 테스트 전용: 경고음을 강제로 한 번 울린다 (§22 스모크가 음소거 상태의 경고음 깨움을 검사). 사용자 동작에는 영향 없음.
+document.addEventListener('tsl:test-chime', () => audio.playChime(true));
 
 // ---- 주기 작업 ----------------------------------------------------------
 // 가상 RPM / 사운드는 60Hz
