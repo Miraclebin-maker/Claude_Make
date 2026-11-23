@@ -20,7 +20,8 @@ export function createAudio() {
   let v10Player = null;
   let v10Promise = null;
   let rpmModel = createRpmModel();
-  let predictor = createPredictor(); // §26: 지연 보정용 기울기 이력
+  let telePred = createPredictor(); // §26: 실데이터(텔레메트리·데모) 샘플 이력. 샘플이 올 때만 관측한다
+  let previewPred = createPredictor(); // §26: 가속 미리듣기(연속 합성 입력) 전용. 실데이터 경로와 섞지 않는다
   let latencySetting = settings.getLatency(); // auto | off | 150 | 300 | 450 (§26.2)
   let volume = settings.getVolume();
   let chimeOn = false; // 기본 OFF (main.js 가 저장값으로 덮어씀)
@@ -120,7 +121,6 @@ export function createAudio() {
     profile = key; // §24.5: 사운드 선택은 저장하지 않는다 (앱을 켠 동안만 유지)
     document.documentElement.dataset.sound = key;
     stopAll();
-    predictor = createPredictor();
     if (key === 'off') {
       applyState(); // §22: 음소거하면 컨텍스트를 놓는다
       return;
@@ -157,10 +157,16 @@ export function createAudio() {
     }
 
     // §26: 블루투스 지연만큼 미래 값을 예측해 소리를 미리 바꾼다. 보정 0 이면 입력 그대로.
-    predictor = observe(predictor, now, speed, pedal);
+    // 실데이터는 observeTelemetry 가 들어온 샘플만 관측하고, 여기서는 마지막 샘플에서 외삽한다.
     const lead = latencyInfo().ms / 1000;
-    const p = predict(predictor, lead);
     const tau = smoothTauFor(lead * 1000);
+    let p = { speed, pedal };
+    if (previewing) {
+      previewPred = observe(previewPred, now, speed, pedal);
+      p = predict(previewPred, lead, now);
+    } else if (lead > 0 && telePred.t !== null) {
+      p = predict(telePred, lead, now);
+    }
 
     if (v10Player) {
       const r = stepRpm(rpmModel, { speedKmh: p.speed, pedalPct: p.pedal, dtSec: dt, smoothTau: tau });
@@ -180,6 +186,7 @@ export function createAudio() {
       if (profile === 'off') setProfile('zimmer');
       previewing = true;
       previewStep = 0;
+      previewPred = createPredictor();
     } else {
       previewing = false;
     }
@@ -226,6 +233,13 @@ export function createAudio() {
     setProfile,
     tick,
     setPreview,
+    // §26: 실데이터 샘플(176 프레임·데모) 관측. 샘플이 올 때만 호출한다. 연결이 끊기면 resetTelemetry.
+    observeTelemetry(tMs, speed, pedal) {
+      telePred = observe(telePred, tMs, speed, pedal);
+    },
+    resetTelemetry() {
+      telePred = createPredictor();
+    },
     setVolume,
     setChime,
     playChime,

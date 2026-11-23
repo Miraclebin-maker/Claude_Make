@@ -111,3 +111,34 @@ test('스무딩 선택: 보정 꺼짐 0.08, 켜짐 0.05, rpm-model 기본값은 
   }
   assert.ok(b.rpm > a.rpm, '짧은 시상수가 목표에 더 빨리 가까워진다');
 });
+
+// v2.9.1: 실데이터는 샘플이 올 때만 관측하고, 틱마다 마지막 샘플에서 외삽한다
+test('10Hz 계단 입력 + 60Hz 예측: 예측 속도는 단조 증가하고 이웃 틱 사이에 출렁임이 없다', () => {
+  let s = createPredictor();
+  const lead = 0.25;
+  const preds = [];
+  let next = 0; // 다음 샘플 인덱스 (100ms 격자)
+  for (let k = 0; k <= 60; k += 1) { // 1초, 60Hz 틱
+    const tMs = (k * 1000) / 60;
+    while (next * 100 <= tMs + 1e-9) { // 샘플은 100ms 마다 계단으로 도착 (속도 20km/h/s 일정 가속)
+      s = observe(s, next * 100, (20 * next * 100) / 1000, 30);
+      next += 1;
+    }
+    preds.push(predict(s, lead, tMs).speed);
+  }
+  for (let i = 1; i < preds.length; i += 1) {
+    assert.ok(preds[i] >= preds[i - 1] - 1e-9, `틱 ${i}: ${preds[i].toFixed(3)} < 이전 ${preds[i - 1].toFixed(3)}`);
+  }
+  assert.ok(preds[preds.length - 1] - preds[0] > 15, '전체적으로 가속 방향으로 올라간다');
+});
+
+test('샘플이 끊기면 외삽은 MAX_AGE_SEC(0.3초)에서 멈춘다', () => {
+  let s = createPredictor();
+  s = observe(s, 0, 0, 0);
+  s = observe(s, 100, 2, 0); // 기울기 > 0
+  const at300 = predict(s, 0.25, 100 + 300);
+  const at5000 = predict(s, 0.25, 100 + 5000);
+  assert.equal(at300.speed, at5000.speed, '0.3초 뒤부터는 더 외삽하지 않는다');
+  assert.equal(at300.pedal, at5000.pedal);
+  assert.ok(predict(s, 0.25, 100 + 100).speed < at300.speed, '0.3초 안에서는 시간에 따라 올라간다');
+});

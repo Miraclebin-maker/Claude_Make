@@ -8,6 +8,7 @@ export const AUTO_MAX_MS = 600;
 export const SLOPE_TAU_SEC = 0.15; // 기울기 지수평균 시상수
 export const MAX_PEDAL_LEAD = 40; // 예측으로 더하는 페달 양 상한 (%)
 export const MAX_SPEED_LEAD = 25; // 예측으로 더하는 속도 양 상한 (km/h)
+export const MAX_AGE_SEC = 0.3; // 마지막 샘플 이후 외삽 시간 상한 (끊긴 데이터에서 멀리 가지 않게)
 export const SMOOTH_TAU_BASE = 0.08; // 보정 꺼짐: 기존 스무딩
 export const SMOOTH_TAU_COMP = 0.05; // 보정 켜짐: 반응을 빠르게
 
@@ -56,10 +57,13 @@ export function observe(state, tMs, speed, pedal) {
   };
 }
 
-// 예측: 현재 값 + 기울기 × 보정 시간. 더하는 양은 상한으로 자르고, 페달 0~100, 속도 0 이상.
-export function predict(state, leadSec) {
-  const lead = Math.max(0, Number(leadSec) || 0);
-  if (lead === 0 || state.t === null) return { speed: state.speed, pedal: state.pedal };
+// 예측: 마지막 샘플 값 + 기울기 × (보정 시간 + 마지막 샘플 이후 경과시간). 경과시간은 MAX_AGE_SEC 로 자른다.
+// 보정 시간이 0이면 마지막 샘플 값을 그대로 돌려준다. 더하는 양은 상한으로 자르고, 페달 0~100, 속도 0 이상.
+export function predict(state, leadSec, nowMs = state.t) {
+  const base = Math.max(0, Number(leadSec) || 0);
+  if (base === 0 || state.t === null) return { speed: state.speed, pedal: state.pedal };
+  const age = clamp((nowMs - state.t) / 1000, 0, MAX_AGE_SEC);
+  const lead = base + age;
   const dP = clamp(state.slopeP * lead, -MAX_PEDAL_LEAD, MAX_PEDAL_LEAD);
   const dS = clamp(state.slopeS * lead, -MAX_SPEED_LEAD, MAX_SPEED_LEAD);
   return {

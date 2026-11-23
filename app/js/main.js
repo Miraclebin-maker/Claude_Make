@@ -115,6 +115,7 @@ ble.onState((st, name) => {
   }
   if (st !== 'connected' && prev === 'connected') {
     state.latest = { speed: 0, pedal: 0, kw: 0 };
+    audio.resetTelemetry();
   }
   schedule();
   syncWakeLock();
@@ -190,6 +191,7 @@ function onFrame(f) {
 
   state.telem = { ...f, totalKw };
   state.latest = { speed: f.speed, pedal: f.pedal, kw: totalKw };
+  audio.observeTelemetry(performance.now(), f.speed, f.pedal); // §26: 샘플이 올 때만 관측
   schedule();
 }
 
@@ -225,6 +227,7 @@ function stopDemo(notify = true) {
   demoTimer = null;
   state.demo = false;
   state.latest = { speed: 0, pedal: 0, kw: 0 };
+  audio.resetTelemetry();
   state.hv = null;
   cam.simulate(null);
   lastCamSim = null;
