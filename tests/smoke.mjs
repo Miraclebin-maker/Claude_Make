@@ -530,6 +530,32 @@ async function main() {
         check(`${tag} 측정 시점에 핸들 경고·카메라 배너 표시`, !!(m && m.hands && m.cam), `hands ${!!(m && m.hands)} cam ${!!(m && m.cam)}`);
         const applied = await page.evaluate(() => document.documentElement.dataset.theme);
         check(`${tag} 테마 적용`, applied === theme, `html[data-theme]=${applied}`);
+        // 실제로 보이고 눌리는지 (2.8.2): 기하만 보면 가리는 요소를 놓친다. 캔버스는 pointer-events:none 이라 elementFromPoint 가 건너뛰므로,
+        // 검사 동안만 켜서 최상위 요소가 대상(자신·자손)인지 본다. 연결 안내 띠(#hint)가 떠 있으면 그 띠가 덮는 것만 허용한다.
+        const hit = await page.evaluate((curTheme) => {
+          const cv = document.getElementById('plaid-canvas');
+          const hint = document.getElementById('hint');
+          const targets = ['#btn-conn', '#val-soc', '.dock [data-act="info"]', '#btn-exit', '#btn-orient', '#btn-fs', '.dock [data-act="settings"]'];
+          const prev = cv.style.pointerEvents;
+          cv.style.pointerEvents = 'auto';
+          try {
+            return targets.map((q) => {
+              const el = document.querySelector(q);
+              if (!el) return { q, ok: false, top: 'missing' };
+              // hud 는 상태줄을 설계상 숨긴다(§14): 숨김이 맞는 테마에서만 건너뛰고, 그 밖에서 숨겨졌으면 실패
+              if (getComputedStyle(el).visibility === 'hidden') return { q, ok: curTheme === 'hud' && q.startsWith('#'), top: 'hidden' };
+              const r = el.getBoundingClientRect();
+              const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+              const hintOver = !!top && !!top.closest('#hint') && !!hint && !hint.hidden;
+              const ok = !!top && (top === el || el.contains(top) || hintOver);
+              return { q, ok, top: top ? (top.id ? '#' + top.id : top.tagName) : 'none' };
+            });
+          } finally {
+            cv.style.pointerEvents = prev;
+          }
+        }, theme);
+        const bad = hit.filter((h) => !h.ok);
+        check(`${tag} 상태줄·하단 버튼이 가리지 않고 눌림 (§24.4, 2.8.2)`, bad.length === 0, bad.map((h) => `${h.q}<-${h.top}`).join(' | ') || 'all');
         check(`${tag} 가로 스크롤 없음`, m.scrollW <= m.innerW, `scrollWidth ${m.scrollW} / innerWidth ${m.innerW}`);
         check(`${tag} 속도 요소 뷰포트 내 완전 노출`, m.speedInViewport,
           `text=${m.speedText} box ${Math.round(m.speed.l)},${Math.round(m.speed.t)}-${Math.round(m.speed.r)},${Math.round(m.speed.b)}`);
@@ -712,7 +738,7 @@ async function main() {
           hits,
         };
       });
-      check(`${vpTag} 설정: 버전 표시 2.8.1`, appLayout.version === '2.8.1', appLayout.version);
+      check(`${vpTag} 설정: 버전 표시 2.8.2`, appLayout.version === '2.8.2', appLayout.version);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 시트 안에 보임`, appLayout.refreshIn && appLayout.quitIn,
         `refresh ${appLayout.refreshIn} quit ${appLayout.quitIn}`);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 서로·다른 버튼과 겹치지 않음`, !appLayout.sameRowHit && appLayout.hits.length === 0,
@@ -816,7 +842,7 @@ async function main() {
           keys: await caches.keys(),
         }));
         check('새로고침: 사운드 선택은 저장하지 않음 (§24.5)', after.saved === null, `saved=${after.saved}`);
-        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.8.1'),
+        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.8.2'),
           after.keys.join(', ') || 'none');
 
         // §15.3 종료: 모든 기능 정지, 오버레이 표시, 다시 시작으로 정상 복귀

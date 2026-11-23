@@ -76,7 +76,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.3s;
-  z-index: 0;
+  /* #app 쌓임 맥락 안에서 배경 위, 내용(상태줄·버튼) 아래 (2.8.2: 0 이면 형제 요소를 덮었다) */
+  z-index: -1;
 }
 html[data-theme="plaid"] .plaid-canvas { opacity: 1; }
 
