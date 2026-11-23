@@ -1,5 +1,2 @@
 tests/screens/
 node_modules/
-# Capacitor 안드로이드 프로젝트는 CI(android.yml)에서 매번 생성한다 (§23.1)
-/android/
-/ios/
