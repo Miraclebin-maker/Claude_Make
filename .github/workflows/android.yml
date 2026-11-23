@@ -1,15 +1,8 @@
 name: Test APK (Capacitor)
 
+# 사용자 요청으로 자동 빌드 중단(§23.7). 필요할 때 Actions 탭에서 수동 실행만.
 on:
   workflow_dispatch:
-  push:
-    branches: [claude/exciting-curie-loguy7]
-    paths:
-      - 'app/**'
-      - 'capacitor.config.json'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/android.yml'
 
 permissions:
   contents: read
