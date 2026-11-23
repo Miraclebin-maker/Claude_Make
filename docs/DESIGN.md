@@ -564,3 +564,15 @@ Capacitor/APK 빌드, 차량 쓰기 기능 일체, 새 데이터 필드 파싱, 
 - 탭(주소창 보임) 상단 여백은 `max(18px, 10px + env(safe-area-inset-top))`로 한다(기존 패딩에 최소 8px 추가).
 - 종료 버튼은 `data-act`를 쓰지 않는다(길게 누르기 전용, 클릭 액션이 따로 실행되지 않도록).
 - 길게 누르기 판정은 1000ms, 취소는 pointerleave와 pointercancel이다.
+
+## 21. v2.6: 전체화면은 버튼으로만
+
+사용자 요청: 시작할 때 전체화면이 강제되지 않고, 전체화면 버튼을 눌렀을 때만 전체화면이 되게.
+
+- 자동 전체화면 제거: 첫 탭 때 `requestFullscreen()`을 호출하는 동작(§5.1, §14.3 "첫 탭 자동 전체화면 유지")을 **삭제**한다. 첫 탭의 다른 역할(오디오 잠금 해제, 연결 힌트 탭)은 유지.
+- 홈 화면 앱: `manifest.webmanifest`의 `display`를 `fullscreen` → `standalone`으로(상단바·하단바가 보이는 일반 앱 창). 설치된 앱도 시작 시 전체화면이 아니다.
+- 방향 전환 버튼(§19.3): 전체화면을 스스로 요청하지 않는다. 이미 전체화면이면 `screen.orientation.lock` 시도, 아니면 바로 CSS 회전 대체로 간다.
+- 전체화면 진입은 **전체화면 버튼만**. 나갈 때는 버튼 또는 시스템 뒤로가기.
+- 상단 여백(§20.1): `html.is-fullscreen`은 **실제 전체화면일 때만**(`document.fullscreenElement` 있음 또는 `display-mode: fullscreen`). `standalone`은 상단바 아래에서 시작하므로 제외하고 브라우저 탭과 같은 규칙.
+- 버전 2.6.0, sw 캐시 동기화.
+- 스모크: 첫 탭 후 `document.fullscreenElement`가 null, 방향 버튼(가로) 후에도 null이고 CSS 회전 적용, 전체화면 버튼 클릭 시에만 전체화면 진입. manifest `display`가 `standalone`.
