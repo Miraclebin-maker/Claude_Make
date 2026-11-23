@@ -371,7 +371,7 @@ function forgetDevice() {
 // ---- 이벤트 바인딩 ------------------------------------------------------
 const ACTIONS = {
   'refresh-app': () => refreshApp(),
-  orient: () => applyOrient(nextOrientMode(state.orient), true),
+  orient: () => applyOrient(nextOrientMode(state.orient)),
   quit: () => quitApp(),
   restart: () => location.reload(),
   conn: () => toggleConnection(),
@@ -415,8 +415,24 @@ function toggleFullscreen() {
   Promise.resolve(req).catch(() => ui.toast('이 브라우저는 전체화면을 지원하지 않습니다'));
 }
 
-document.addEventListener('fullscreenchange', () => {
+// 전체화면 진입: 저장된 방향이 가로/세로면 잠금을 다시 시도한다(성공하면 CSS 회전 해제, §21).
+// 나올 때: 잠금은 풀리므로 실제 방향과 저장된 방향을 비교해 CSS 회전 여부를 다시 정한다.
+document.addEventListener('fullscreenchange', async () => {
   state.fullscreen = !!document.fullscreenElement;
+  updateFullscreenClass();
+  if (document.fullscreenElement) {
+    if (state.orient !== 'auto') {
+      try {
+        await screen.orientation.lock(state.orient);
+        state.lockOk = true;
+      } catch (e) {
+        state.lockOk = false;
+      }
+    }
+  } else {
+    state.lockOk = false;
+  }
+  updateRotation();
   schedule();
 });
 if (!document.fullscreenEnabled) {
@@ -442,15 +458,9 @@ document.addEventListener('click', (e) => {
 
 // 사용자 활성화: 터치 기기에서 pointerdown 은 user activation 이 아니므로 click(capture) 에서 처리.
 // 첫 클릭: 전체화면 요청. 매 클릭: 오디오 컨텍스트 생성/재개. 힌트 상태면 탭 위치에 따라 블루투스 연결.
-let gestureDone = false;
+// 첫 탭은 자동 전체화면을 요청하지 않는다 (§21). 오디오 잠금 해제와 연결 힌트만 맡는다.
 document.addEventListener('click', (ev) => {
   if (state.quit) return;
-  if (!gestureDone) {
-    gestureDone = true;
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-    }
-  }
   audio.unlock();
   if (state.hint && !state.demo && ev.target instanceof Element
     && !ev.target.closest('button, input, .sheet, .scrim')) {
@@ -558,22 +568,20 @@ function updateRotation() {
   schedule();
 }
 
-async function applyOrient(mode, fromGesture) {
+// 방향 버튼은 전체화면을 스스로 요청하지 않는다 (§21). 이미 전체화면이면 잠금을 시도하고,
+// 아니거나 실패하면 CSS 회전 대체(§19.3)로 간다.
+async function applyOrient(mode) {
   if (!isOrientMode(mode)) return;
   state.orient = mode;
   settings.setOrient(mode);
   state.lockOk = false;
   if (mode === 'auto') {
     try { screen.orientation.unlock(); } catch (e) { /* 미지원 */ }
-  } else {
-    // 잠금은 전체화면에서만 되는 브라우저가 많다. 버튼 누름(제스처) 안에서 먼저 전체화면을 요청한다.
-    if (fromGesture && !document.fullscreenElement) {
-      try { await document.documentElement.requestFullscreen(); } catch (e) { /* 무시 */ }
-    }
+  } else if (document.fullscreenElement) {
     try {
       await screen.orientation.lock(mode);
       state.lockOk = true;
-    } catch (e) { /* 잠금 실패: 아래에서 CSS 회전으로 대체 */ }
+    } catch (e) { /* 잠금 실패: CSS 회전으로 대체 */ }
   }
   updateRotation();
   ui.toast(mode === 'auto' ? '화면 방향: 자동' : `화면 방향: ${mode === 'landscape' ? '가로' : '세로'}`);
@@ -582,13 +590,11 @@ async function applyOrient(mode, fromGesture) {
 window.addEventListener('resize', updateRotation);
 window.addEventListener('orientationchange', updateRotation);
 
-// 전체화면·홈 화면 앱 여부 (§20.1): html.is-fullscreen 클래스로 CSS 에 알린다
-const standaloneMq = window.matchMedia ? window.matchMedia('(display-mode: fullscreen), (display-mode: standalone)') : null;
+// 실제 전체화면 여부 (§20.1, §21): html.is-fullscreen 은 document.fullscreenElement 가 있을 때만.
+// 홈 화면 앱(standalone)은 상단바 아래에서 시작하므로 브라우저 탭과 같은 규칙을 따른다.
 function updateFullscreenClass() {
-  const on = !!document.fullscreenElement || !!(standaloneMq && standaloneMq.matches);
-  document.documentElement.classList.toggle('is-fullscreen', on);
+  document.documentElement.classList.toggle('is-fullscreen', !!document.fullscreenElement);
 }
-if (standaloneMq && standaloneMq.addEventListener) standaloneMq.addEventListener('change', updateFullscreenClass);
 updateFullscreenClass();
 
 // 종료 버튼 (§20.2): 1초 길게 눌러야 종료. 진행 링이 차오르고, 짧게 누르면 안내만 한다.

@@ -308,6 +308,50 @@ async function main() {
       await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
       await page.waitForSelector('#val-speed');
 
+      // §21 전체화면은 버튼으로만: 첫 탭은 전체화면을 요청하지 않고, 방향 버튼도 전체화면을 만들지 않는다
+      if (vp.w === 390 && vp.h === 844) {
+        await page.mouse.click(195, 420); // 배경 첫 탭 (버튼이 아닌 곳)
+        await page.waitForTimeout(300);
+        const afterTap = await page.evaluate(() => ({ fs: !!document.fullscreenElement, cls: document.documentElement.classList.contains('is-fullscreen') }));
+        check(`${vpTag} 첫 탭 뒤 전체화면 아님 (§21)`, !afterTap.fs && !afterTap.cls, `fs=${afterTap.fs} cls=${afterTap.cls}`);
+        const mf = JSON.parse(readFileSync(join(appDir, 'manifest.webmanifest'), 'utf8'));
+        check('manifest display 는 standalone (§21)', mf.display === 'standalone', `display=${mf.display}`);
+        await page.click('#btn-orient'); // 자동 -> 가로: 전체화면을 만들지 않고 CSS 회전
+        await page.waitForTimeout(300);
+        const orientNoFs = await page.evaluate(() => ({ fs: !!document.fullscreenElement, rot: document.getElementById('app').classList.contains('rot') }));
+        check(`${vpTag} 방향 가로 뒤에도 전체화면 아님, CSS 회전 적용 (§21)`, !orientNoFs.fs && orientNoFs.rot, `fs=${orientNoFs.fs} rot=${orientNoFs.rot}`);
+        await page.click('#btn-orient'); // 가로 -> 세로
+        await page.click('#btn-orient'); // 세로 -> 자동
+        await page.waitForTimeout(200);
+        await page.click('#btn-fs'); // 전체화면 버튼: 여기서만 진입
+        await page.waitForTimeout(500);
+        const fsOn = await page.evaluate(() => ({ fs: !!document.fullscreenElement, cls: document.documentElement.classList.contains('is-fullscreen') }));
+        check(`${vpTag} 전체화면 버튼으로 진입, is-fullscreen 표시 (§21)`, fsOn.fs && fsOn.cls, `fs=${fsOn.fs} cls=${fsOn.cls}`);
+        await page.click('#btn-fs'); // 다시 누르면 나간다
+        await page.waitForTimeout(500);
+        const fsOff = await page.evaluate(() => ({ fs: !!document.fullscreenElement, cls: document.documentElement.classList.contains('is-fullscreen') }));
+        check(`${vpTag} 전체화면 버튼으로 나가면 is-fullscreen 해제 (§21)`, !fsOff.fs && !fsOff.cls, `fs=${fsOff.fs} cls=${fsOff.cls}`);
+        // §21 전체화면 진입 시 저장된 방향으로 잠금 재시도: 헤드리스 잠금을 성공으로 모의 -> 진입 뒤 .rot 해제, 나오면 다시 CSS 회전
+        await page.click('#btn-orient'); // 자동 -> 가로 (전체화면 아님: CSS 회전)
+        await page.waitForTimeout(200);
+        const rotBefore = await page.evaluate(() => document.getElementById('app').classList.contains('rot'));
+        await page.evaluate(() => {
+          Object.defineProperty(screen.orientation, 'lock', { value: () => Promise.resolve(), configurable: true });
+        });
+        await page.click('#btn-fs'); // 진입
+        await page.waitForTimeout(500);
+        const lockedIn = await page.evaluate(() => ({ fs: !!document.fullscreenElement, rot: document.getElementById('app').classList.contains('rot') }));
+        check(`${vpTag} 전체화면 진입 때 저장된 가로 방향 잠금 성공 -> CSS 회전 해제 (§21)`,
+          rotBefore && lockedIn.fs && !lockedIn.rot, `before=${rotBefore} fs=${lockedIn.fs} rot=${lockedIn.rot}`);
+        await page.click('#btn-fs'); // 나옴
+        await page.waitForTimeout(500);
+        const lockedOut = await page.evaluate(() => ({ fs: !!document.fullscreenElement, rot: document.getElementById('app').classList.contains('rot') }));
+        check(`${vpTag} 전체화면에서 나오면 CSS 회전 다시 적용 (§21)`, !lockedOut.fs && lockedOut.rot, `fs=${lockedOut.fs} rot=${lockedOut.rot}`);
+        await page.click('#btn-orient'); // 가로 -> 세로
+        await page.click('#btn-orient'); // 세로 -> 자동
+        await page.waitForTimeout(200);
+      }
+
       // §16.2 경고음 기본 OFF (저장값 없음), §16.3 화면 켜짐 상태 표시
       await page.waitForTimeout(300);
       const boot16 = await page.evaluate(() => ({
@@ -507,7 +551,7 @@ async function main() {
           hits,
         };
       });
-      check(`${vpTag} 설정: 버전 표시 2.5.0`, appLayout.version === '2.5.0', appLayout.version);
+      check(`${vpTag} 설정: 버전 표시 2.6.0`, appLayout.version === '2.6.0', appLayout.version);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 시트 안에 보임`, appLayout.refreshIn && appLayout.quitIn,
         `refresh ${appLayout.refreshIn} quit ${appLayout.quitIn}`);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 서로·다른 버튼과 겹치지 않음`, !appLayout.sameRowHit && appLayout.hits.length === 0,
@@ -608,7 +652,7 @@ async function main() {
           keys: await caches.keys(),
         }));
         check('새로고침: 설정 유지 (사운드 v10 저장값)', after.saved === 'v10', `saved=${after.saved}`);
-        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.5.0'),
+        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.6.0'),
           after.keys.join(', ') || 'none');
 
         // §15.3 종료: 모든 기능 정지, 오버레이 표시, 다시 시작으로 정상 복귀

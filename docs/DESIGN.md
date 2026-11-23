@@ -576,3 +576,4 @@ Capacitor/APK 빌드, 차량 쓰기 기능 일체, 새 데이터 필드 파싱, 
 - 상단 여백(§20.1): `html.is-fullscreen`은 **실제 전체화면일 때만**(`document.fullscreenElement` 있음 또는 `display-mode: fullscreen`). `standalone`은 상단바 아래에서 시작하므로 제외하고 브라우저 탭과 같은 규칙.
 - 버전 2.6.0, sw 캐시 동기화.
 - 스모크: 첫 탭 후 `document.fullscreenElement`가 null, 방향 버튼(가로) 후에도 null이고 CSS 회전 적용, 전체화면 버튼 클릭 시에만 전체화면 진입. manifest `display`가 `standalone`.
+- 전체화면에 들어갈 때 저장된 방향(가로/세로)이면 `screen.orientation.lock`을 다시 시도해 성공하면 CSS 회전(`.app.rot`)을 해제하고, 실패하면 CSS 회전을 유지한다. 나올 때는 잠금이 풀리므로 실제 방향과 저장된 방향을 비교해 CSS 회전 여부를 다시 정한다.

@@ -3,7 +3,7 @@
   "short_name": "TSL",
   "start_url": "./index.html",
   "scope": "./",
-  "display": "fullscreen",
+  "display": "standalone",
   "orientation": "any",
   "background_color": "#0B0C0E",
   "theme_color": "#0B0C0E",
