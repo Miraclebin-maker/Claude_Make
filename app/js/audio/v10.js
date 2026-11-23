@@ -72,7 +72,7 @@ export function createV10Graph(ctx, buffers, dest, startAt = ctx.currentTime) {
   let stopped = false;
 
   return {
-    update(rpm, pedalPct, kw, when = ctx.currentTime) {
+    update(rpm, pedalPct, kw, when = ctx.currentTime, tau = 0.08) {
       if (stopped) return;
       const mix = loopMix(rpm);
       const w = equalPowerWeights(mix.t);
@@ -85,8 +85,8 @@ export function createV10Graph(ctx, buffers, dest, startAt = ctx.currentTime) {
         l.gain.gain.setTargetAtTime(g, when, 0.03);
       });
       const m = masterParams(pedalPct, kw);
-      lpf.frequency.setTargetAtTime(m.cutoffHz, when, 0.08);
-      master.gain.setTargetAtTime(m.gain, when, 0.08);
+      lpf.frequency.setTargetAtTime(m.cutoffHz, when, tau); // §26: 보정 중에는 짧은 시상수
+      master.gain.setTargetAtTime(m.gain, when, tau);
     },
     stop() {
       if (stopped) return;

@@ -148,6 +148,12 @@ export function createUi() {
       b.classList.toggle('on', on);
       b.setAttribute('aria-pressed', String(on));
     });
+    document.querySelectorAll('[data-latency]').forEach((b) => {
+      const on = b.dataset.latency === s.latency;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    text('latency-applied', s.latencyText || '적용 중: --');
     document.querySelectorAll('[data-theme]').forEach((b) => {
       const on = b.dataset.theme === s.theme;
       b.classList.toggle('on', on);

@@ -2,6 +2,7 @@
 // zimmer/plaid 는 ev.js 의 오실레이터로, v10 은 미리 렌더한 RPM 루프(v10.js)를 가상 변속기(rpm-model.js)로 재생한다.
 import { startEv } from './ev.js';
 import { createRpmModel, stepRpm } from './rpm-model.js';
+import { createPredictor, observe, predict, resolveLatency, latencyLabel, smoothTauFor } from './latency.js';
 import { loadV10Buffers, createV10Graph } from './v10.js';
 import * as settings from '../settings.js';
 import { audioStateFor, unlockWanted, CHIME_HOLD_MS } from './audio-state.js';
@@ -19,6 +20,8 @@ export function createAudio() {
   let v10Player = null;
   let v10Promise = null;
   let rpmModel = createRpmModel();
+  let predictor = createPredictor(); // §26: 지연 보정용 기울기 이력
+  let latencySetting = settings.getLatency(); // auto | off | 150 | 300 | 450 (§26.2)
   let volume = settings.getVolume();
   let chimeOn = false; // 기본 OFF (main.js 가 저장값으로 덮어씀)
   let previewing = false;
@@ -117,6 +120,7 @@ export function createAudio() {
     profile = key; // §24.5: 사운드 선택은 저장하지 않는다 (앱을 켠 동안만 유지)
     document.documentElement.dataset.sound = key;
     stopAll();
+    predictor = createPredictor();
     if (key === 'off') {
       applyState(); // §22: 음소거하면 컨텍스트를 놓는다
       return;
@@ -152,12 +156,23 @@ export function createAudio() {
       speed = v10Player ? 0 : previewStep * 1.6;
     }
 
+    // §26: 블루투스 지연만큼 미래 값을 예측해 소리를 미리 바꾼다. 보정 0 이면 입력 그대로.
+    predictor = observe(predictor, now, speed, pedal);
+    const lead = latencyInfo().ms / 1000;
+    const p = predict(predictor, lead);
+    const tau = smoothTauFor(lead * 1000);
+
     if (v10Player) {
-      const r = stepRpm(rpmModel, { speedKmh: speed, pedalPct: pedal, dtSec: dt });
-      v10Player.update(r.rpm, pedal, previewing ? 0 : kw, ctx.currentTime);
+      const r = stepRpm(rpmModel, { speedKmh: p.speed, pedalPct: p.pedal, dtSec: dt, smoothTau: tau });
+      v10Player.update(r.rpm, p.pedal, previewing ? 0 : kw, ctx.currentTime, tau);
     } else if (ev) {
-      ev.update(speed, pedal, previewing ? 0 : kw, peakKw);
+      ev.update(p.speed, p.pedal, previewing ? 0 : kw, peakKw);
     }
+  }
+
+  // 적용 지연 (§26.2). 자동은 컨텍스트가 있으면 outputLatency + baseLatency 를 쓴다.
+  function latencyInfo() {
+    return resolveLatency(latencySetting, { outputLatency: ctx && ctx.outputLatency, baseLatency: ctx && ctx.baseLatency });
   }
 
   function setPreview(on) {
@@ -241,6 +256,12 @@ export function createAudio() {
       }
     },
     get volume() { return volume; },
+    get latencySetting() { return latencySetting; },
+    setLatency(v) {
+      latencySetting = v;
+      settings.setLatency(v);
+    },
+    latencyLabel() { return latencyLabel(latencyInfo()); },
     get chimeOn() { return chimeOn; },
     // 사용자 활성화 이벤트(click 등)마다 호출. 컨텍스트가 없으면 저장된 프로필로 만들고,
     // suspended 이면 재개를 시도한다.

@@ -471,6 +471,29 @@ async function main() {
         await page.waitForTimeout(300);
       }
 
+      // §26 블루투스 지연 보정 (2.9.0): 설정 → 사운드에 버튼 5개와 적용값, 선택 저장 후 새로고침해도 유지
+      if (vp.w === 390 && vp.h === 844) {
+        await page.click('.dock [data-act="settings"]');
+        const latCount = await page.locator('#sheet-settings [data-latency]').count();
+        check(`${vpTag} 블루투스 지연 보정 버튼 5개 (§26.2)`, latCount === 5, `count=${latCount}`);
+        await page.click('#sheet-settings [data-latency="300"]');
+        await page.waitForTimeout(150); // 화면 갱신은 다음 프레임에 한다
+        const latApplied = await page.textContent('#latency-applied');
+        check(`${vpTag} 블루투스 지연 보정 300 선택: 적용값 표시 (§26.2)`, latApplied.includes('300ms'), latApplied);
+        await page.reload();
+        await page.waitForSelector('#cluster', { state: 'attached' });
+        await page.waitForTimeout(400);
+        await page.click('.dock [data-act="settings"]');
+        const latKept = await page.evaluate(() => ({
+          saved: localStorage.getItem('tsl_latency'),
+          on: document.querySelector('#sheet-settings [data-latency="300"]').classList.contains('on'),
+        }));
+        check(`${vpTag} 블루투스 지연 보정 300 새로고침 뒤 유지 (§26.2)`, latKept.saved === '300' && latKept.on, JSON.stringify(latKept));
+        await page.click('#sheet-settings [data-latency="auto"]'); // 기본값으로 되돌린다
+        await page.click('#sheet-settings .x');
+        await page.waitForTimeout(200);
+      }
+
       // §16.2 경고음 기본 OFF (저장값 없음), §16.3 화면 켜짐 상태 표시
       await page.waitForTimeout(300);
       const boot16 = await page.evaluate(() => ({
@@ -738,7 +761,7 @@ async function main() {
           hits,
         };
       });
-      check(`${vpTag} 설정: 버전 표시 2.8.3`, appLayout.version === '2.8.3', appLayout.version);
+      check(`${vpTag} 설정: 버전 표시 2.9.0`, appLayout.version === '2.9.0', appLayout.version);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 시트 안에 보임`, appLayout.refreshIn && appLayout.quitIn,
         `refresh ${appLayout.refreshIn} quit ${appLayout.quitIn}`);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 서로·다른 버튼과 겹치지 않음`, !appLayout.sameRowHit && appLayout.hits.length === 0,
@@ -859,7 +882,7 @@ async function main() {
           keys: await caches.keys(),
         }));
         check('새로고침: 사운드 선택은 저장하지 않음 (§24.5)', after.saved === null, `saved=${after.saved}`);
-        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.8.3'),
+        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.9.0'),
           after.keys.join(', ') || 'none');
 
         // §15.3 종료: 모든 기능 정지, 오버레이 표시, 다시 시작으로 정상 복귀

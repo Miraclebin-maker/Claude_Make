@@ -36,6 +36,8 @@ const state = {
   theme: settings.getTheme(), // §24.5: 저장값
   mirror: settings.getMirror(),
   sound: 'off', // §24.5: 시작 때는 항상 음소거 (저장된 음원을 복원하지 않는다)
+  latency: settings.getLatency(), // 블루투스 지연 보정 설정 (§26.2)
+  latencyText: '', // 적용값 표시 문구 (audio 가 정한다)
   volume: settings.getVolume(),
   chime: settings.getChime(), // 기본 OFF (§16.2)
   wake: 'off', // 화면 켜짐 상태: unsupported | on | off (§16.3)
@@ -58,6 +60,11 @@ const state = {
 const ui = createUi();
 const audio = createAudio();
 audio.setChime(settings.getChime());
+state.latencyText = audio.latencyLabel();
+setInterval(() => { // 자동 값은 컨텍스트가 생긴 뒤 바뀌므로 1초마다 표시를 맞춘다 (§26.2)
+  const t = audio.latencyLabel();
+  if (t !== state.latencyText) { state.latencyText = t; schedule(); }
+}, 1000);
 const plaid = createPlaid(document.getElementById('plaid-canvas'));
 if (state.theme === 'plaid') plaid.start(); // §24.5: 저장된 테마가 플레이드면 시작 시 바로 그린다
 const demo = createDemo();
@@ -311,6 +318,14 @@ function setSound(key) {
   schedule();
 }
 
+// 블루투스 지연 보정 선택 (§26.2). 선택은 저장한다(audio 가 저장).
+function setLatency(v) {
+  state.latency = v;
+  audio.setLatency(v);
+  state.latencyText = audio.latencyLabel();
+  schedule();
+}
+
 function setTheme(t) {
   // 알 수 없는 값(삭제된 테마 포함)은 미니멀로
   state.theme = THEMES.includes(t) ? t : settings.DEFAULT_THEME;
@@ -446,6 +461,11 @@ document.addEventListener('click', (e) => {
   const sound = e.target.closest('button[data-sound]');
   if (sound) {
     setSound(sound.dataset.sound);
+    return;
+  }
+  const lat = e.target.closest('button[data-latency]');
+  if (lat) {
+    setLatency(lat.dataset.latency);
     return;
   }
   const theme = e.target.closest('button[data-theme]');

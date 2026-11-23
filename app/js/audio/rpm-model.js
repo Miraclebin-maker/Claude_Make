@@ -38,7 +38,7 @@ export function createRpmModel() {
 }
 
 // 한 틱 진행. 반환: { rpm, gear, event: null | 'upshift' | 'downshift' }
-export function stepRpm(m, { speedKmh, pedalPct, dtSec }) {
+export function stepRpm(m, { speedKmh, pedalPct, dtSec, smoothTau = SMOOTH_TAU }) {
   const dt = Math.max(0, dtSec);
   const p = clamp(pedalPct / 100, 0, 1);
   let event = null;
@@ -84,7 +84,7 @@ export function stepRpm(m, { speedKmh, pedalPct, dtSec }) {
     m.rev = IDLE_RPM; // 주행 중에는 정차 레브 상태를 초기화
   }
 
-  m.rpm += (target - m.rpm) * (1 - Math.exp(-dt / SMOOTH_TAU));
+  m.rpm += (target - m.rpm) * (1 - Math.exp(-dt / smoothTau)); // §26: 지연 보정 중에는 짧게
   m.rpm = clamp(m.rpm, IDLE_RPM, REDLINE_RPM);
   return { rpm: m.rpm, gear: m.gear, event };
 }

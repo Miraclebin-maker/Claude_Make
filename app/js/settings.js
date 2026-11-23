@@ -154,6 +154,17 @@ export function setOrient(mode) {
   return write(KEY.orient, mode);
 }
 
+// 블루투스 지연 보정 (§26.2): auto | off | 150 | 300 | 450. 차량별 장치 설정이라 저장한다.
+const LATENCY_KEYS = ['auto', 'off', '150', '300', '450'];
+export function getLatency() {
+  const v = read('tsl_latency', 'auto');
+  return LATENCY_KEYS.includes(v) ? v : 'auto';
+}
+
+export function setLatency(v) {
+  return write('tsl_latency', LATENCY_KEYS.includes(v) ? v : 'auto');
+}
+
 export function getVolume() {
   const v = Number(read(KEY.volume, '60'));
   return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 60;
