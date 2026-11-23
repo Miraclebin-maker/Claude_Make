@@ -647,3 +647,30 @@ Capacitor/APK 빌드, 차량 쓰기 기능 일체, 새 데이터 필드 파싱, 
 - 네이티브 자동 연결은 `getDevices`를 거치지 않고 저장된 `deviceId`로 바로 `connect`한다. 실패하면 10초 뒤 재시도.
 - `initialize({ androidNeverForLocation: true })`: 대상 기기는 안드로이드 12 이상이라 위치 권한을 요청하지 않는다.
 - 확인 대기(실기기): `connect` 뒤 `getServices`로 특성을 찾는 방식, 취소 판별(메시지의 cancel/취소).
+
+## 24. v2.8: 강제 회전 안정화
+
+실기기 보고(스크린샷): 세로로 든 휴대폰에서 '가로' 강제 + 전체화면일 때 상태줄(연결·기어·SOC)과 하단 버튼(ⓘ·↻·⛶·⚙)이 사라지고 ⏻만 보임. 또 화면이 가로·세로로 갑자기 왔다 갔다 함.
+
+원인 판단:
+- `.app.rot` 크기를 `100dvh × 100dvw`, 이동을 `translateX(100dvw)`로 잡음. 전체화면·주소창 변화 때 일부 기기에서 dvh/dvw가 실제 보이는 영역과 달라 회전된 앱이 화면 밖으로 넘친다(가장자리 요소가 잘림).
+- 회전 판단을 `window.innerWidth/innerHeight`로 하고 resize/orientationchange마다 즉시 다시 계산한다. 회전 애니메이션 중간값이나 기울기 경계에서 값이 흔들리면 CSS 회전을 켰다 껐다 반복한다.
+
+### 24.1 회전 박스 크기를 실제 값으로
+- CSS 단위(dvh/dvw) 대신 JS가 측정한 실제 보이는 영역 크기를 CSS 변수로 넣는다: `--vw`, `--vh` = `visualViewport.width/height`(없으면 `innerWidth/innerHeight`) px.
+- `.app.rot { width: var(--vh); height: var(--vw); transform: translateX(var(--vw)) rotate(90deg); }`
+- 측정은 `resize`, `visualViewport resize`, `fullscreenchange`, `orientationchange` 뒤 다음 프레임에서.
+
+### 24.2 방향 판단 흔들림 방지
+- 실제 방향은 `screen.orientation.type`(있으면, `landscape-*`/`portrait-*`)을 우선 쓰고, 없을 때만 크기 비교.
+- 재계산은 마지막 이벤트 후 **400ms 디바운스**. 같은 결과면 클래스를 건드리지 않는다.
+- 회전 잠금 시도 중(`lock()` 대기 중)에는 재계산하지 않는다.
+- CSS 회전 상태가 바뀐 뒤 **1초간** 다시 바꾸지 않는다(빠른 왕복 방지). 단 사용자가 ↻ 버튼을 누르면 즉시 반영.
+
+### 24.3 상태 표시(진단용)
+- 설정 → 앱에 한 줄: "화면 방향: 요청 <자동/가로/세로> · 잠금 <성공/실패/해당 없음> · 회전 <적용/없음>". 실기기 문제 보고 때 스크린샷으로 원인을 알 수 있게.
+
+### 24.4 검증
+- orientation.js에 디바운스·쿨다운 판단을 순수 함수(시간 인자)로 추가해 단위 테스트: 400ms 안의 연속 변화는 마지막 값만 반영, 1초 쿨다운, ↻ 버튼은 즉시.
+- 스모크: 390×844에서 가로 강제(잠금 거부) + 전체화면 상태를 흉내 내고 **visualViewport 크기를 다르게(dvh와 불일치) 설정**한 경우에도 상태줄 3요소와 하단 버튼 5개가 모두 화면 안에 보임. resize 이벤트를 100ms 간격으로 10번 쏴도 `.rot` 토글 횟수 ≤ 1.
+- 버전 2.8.0.
