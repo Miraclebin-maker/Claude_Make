@@ -582,6 +582,56 @@ async function applyOrient(mode, fromGesture) {
 window.addEventListener('resize', updateRotation);
 window.addEventListener('orientationchange', updateRotation);
 
+// 전체화면·홈 화면 앱 여부 (§20.1): html.is-fullscreen 클래스로 CSS 에 알린다
+const standaloneMq = window.matchMedia ? window.matchMedia('(display-mode: fullscreen), (display-mode: standalone)') : null;
+function updateFullscreenClass() {
+  const on = !!document.fullscreenElement || !!(standaloneMq && standaloneMq.matches);
+  document.documentElement.classList.toggle('is-fullscreen', on);
+}
+if (standaloneMq && standaloneMq.addEventListener) standaloneMq.addEventListener('change', updateFullscreenClass);
+updateFullscreenClass();
+
+// 종료 버튼 (§20.2): 1초 길게 눌러야 종료. 진행 링이 차오르고, 짧게 누르면 안내만 한다.
+(function attachExitHold() {
+  const EXIT_HOLD_MS = 1000;
+  const btn = document.getElementById('btn-exit');
+  const circle = btn.querySelector('.ring circle');
+  let t0 = 0;
+  let raf = 0;
+  const setProgress = (p) => { circle.style.strokeDashoffset = String(100 * (1 - p)); };
+  const stop = () => {
+    cancelAnimationFrame(raf);
+    raf = 0;
+    t0 = 0;
+    setProgress(0);
+  };
+  const tick = () => {
+    const p = Math.min(1, (performance.now() - t0) / EXIT_HOLD_MS);
+    setProgress(p);
+    if (p >= 1) {
+      stop();
+      quitApp();
+      return;
+    }
+    raf = requestAnimationFrame(tick);
+  };
+  btn.addEventListener('pointerdown', (e) => {
+    if (state.quit || t0) return;
+    e.preventDefault();
+    t0 = performance.now();
+    raf = requestAnimationFrame(tick);
+  });
+  btn.addEventListener('pointerup', () => {
+    if (!t0) return;
+    const short = performance.now() - t0 < EXIT_HOLD_MS;
+    stop();
+    if (short) ui.toast('길게 누르면 종료됩니다');
+  });
+  const cancel = () => { if (t0) stop(); };
+  btn.addEventListener('pointercancel', cancel);
+  btn.addEventListener('pointerleave', cancel);
+})();
+
 if ('serviceWorker' in navigator) {
   // 설정 파일을 HTTP 캐시에서 읽지 않도록 워커 스크립트를 항상 서버에서 확인한다.
   const hadController = !!navigator.serviceWorker.controller;

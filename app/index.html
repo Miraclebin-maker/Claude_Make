@@ -78,6 +78,10 @@
 
     <footer class="dock">
       <button type="button" class="round" data-act="info" aria-label="정보">ⓘ</button>
+      <button type="button" id="btn-exit" class="round exit" aria-label="종료 (1초 길게 누르기)">
+        <svg class="ring" viewBox="0 0 56 56" aria-hidden="true"><circle cx="28" cy="28" r="26" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"/></svg>
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
       <button type="button" id="btn-orient" class="round orient" data-act="orient" aria-label="화면 방향">
         <svg id="ic-orient-auto" class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <svg id="ic-orient-landscape" class="ic" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="3" y="7" width="18" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>
@@ -240,7 +244,7 @@
       <h3>앱</h3>
       <div class="row">
         <span>버전</span>
-        <span id="app-version" class="val">2.4.0</span>
+        <span id="app-version" class="val">2.5.0</span>
       </div>
       <div class="row">
         <span>화면 켜짐 유지</span>

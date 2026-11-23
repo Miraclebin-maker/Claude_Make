@@ -89,6 +89,7 @@ html[data-theme="plaid"] .plaid-canvas { opacity: 1; }
   padding-bottom: 6px;
 }
 
+
 .conn {
   justify-self: start;
   min-height: 44px;
@@ -301,6 +302,10 @@ html[data-theme="plaid"] .plaid-canvas { opacity: 1; }
 
 /* 세로 + 신규 테마(arc, twin, hud): 핸들 경고가 떠 있는 동안 kW 블록은 숨긴다(자리 유지). */
 @container app (aspect-ratio < 1) {
+  /* 전체화면·홈 화면 앱: 상단바와 겹치지 않도록 최소 32px (§20.1) */
+  html.is-fullscreen .app:not(.rot) .status { padding-top: max(env(safe-area-inset-top), 32px); }
+  /* 브라우저 탭(주소창 보임): 기존 값에 최소 8px 더 (§20.1). 강제 회전(.app.rot)은 제외 */
+  html:not(.is-fullscreen) .app:not(.rot) .status { padding-top: max(18px, calc(10px + env(safe-area-inset-top))); }
   .cluster:has(> #hands-alert:not([hidden])) .kw-block { visibility: hidden; }
   /* 세로: 방향지시등 열이 화면 가장자리에 붙도록 여백만큼 넓힌다 (속도 칸 250px 이상 유지, §12.8) */
   .center-row { width: calc(100% + 32px); margin: 0 -16px; }
@@ -422,6 +427,26 @@ html[data-theme="hud"] .dock { opacity: 0.4; }
 }
 /* 전체화면 버튼: 하단 줄 오른쪽, ⚙ 왼쪽 */
 .round.orient { width: 44px; height: 44px; margin-left: auto; }
+
+/* 종료 버튼 (§20.2): 빨간 테두리·아이콘, 길게 누르는 동안 둘레 진행 링 */
+.round.exit { width: 44px; height: 44px; color: var(--danger); border-color: var(--danger); position: relative; }
+.round.exit .ring {
+  position: absolute;
+  left: -6px;
+  top: -6px;
+  width: 56px;
+  height: 56px;
+  transform: rotate(-90deg);
+  pointer-events: none;
+}
+.round.exit .ring circle {
+  fill: none;
+  stroke: var(--danger);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.05s linear;
+}
+.round.exit .ic { width: 22px; height: 22px; }
 .round.fs {
   width: 44px;
   height: 44px;

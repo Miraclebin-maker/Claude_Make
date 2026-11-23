@@ -419,6 +419,17 @@ async function main() {
           check(`${tag} 게이지 가로 중심 정렬 (폭의 3% 이내)`, m.centerErr !== null && m.centerErr <= 0.03,
             m.centerErr === null ? 'no svg element' : `차이 ${(m.centerErr * 100).toFixed(2)}%`);
         }
+        // §20.2 종료 버튼: 화면 안, 다른 하단 버튼과 겹치지 않음 (모든 뷰포트·테마)
+        const exitBox = await page.evaluate(() => {
+          const r = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; };
+          const me = r(document.getElementById('btn-exit'));
+          const hit = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+          const others = [...document.querySelectorAll('.dock button')].filter((b) => b.id !== 'btn-exit').map(r);
+          return { inside: me.l >= 0 && me.t >= 0 && me.r <= innerWidth && me.b <= innerHeight, overlaps: others.filter((o) => hit(me, o)).length };
+        });
+        check(`${tag} 종료 버튼 화면 안, 다른 버튼과 비교차 (§20.2)`, exitBox.inside && exitBox.overlaps === 0,
+          `inside=${exitBox.inside} overlaps=${exitBox.overlaps}`);
+
         // 가로 780x340 최소 크기 (신규 SVG 테마)
         if (SVG_THEMES.includes(theme) && vp.w === 780 && vp.h === 340) {
           const z = m.sizes;
@@ -496,7 +507,7 @@ async function main() {
           hits,
         };
       });
-      check(`${vpTag} 설정: 버전 표시 2.4.0`, appLayout.version === '2.4.0', appLayout.version);
+      check(`${vpTag} 설정: 버전 표시 2.5.0`, appLayout.version === '2.5.0', appLayout.version);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 시트 안에 보임`, appLayout.refreshIn && appLayout.quitIn,
         `refresh ${appLayout.refreshIn} quit ${appLayout.quitIn}`);
       check(`${vpTag} 설정: 새로고침·종료 버튼이 서로·다른 버튼과 겹치지 않음`, !appLayout.sameRowHit && appLayout.hits.length === 0,
@@ -597,7 +608,7 @@ async function main() {
           keys: await caches.keys(),
         }));
         check('새로고침: 설정 유지 (사운드 v10 저장값)', after.saved === 'v10', `saved=${after.saved}`);
-        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.4.0'),
+        check('새로고침: 이전 버전 캐시 없음 (현재 버전 캐시만)', after.keys.every((k) => k === 'tsl-shell-2.5.0'),
           after.keys.join(', ') || 'none');
 
         // §15.3 종료: 모든 기능 정지, 오버레이 표시, 다시 시작으로 정상 복귀
@@ -618,6 +629,47 @@ async function main() {
         const back = await page.evaluate(() => document.getElementById('quit-overlay').hidden);
         check('다시 시작: 오버레이 닫히고 앱 정상 로드', back === true, `hidden=${back}`);
       }
+      // §20.1 세로 상단 여백: 세로 뷰포트에서 탭(기본), 전체화면(is-fullscreen 강제)을 비교한다
+      const isPortrait = vp.h > vp.w;
+      // 헤드리스는 첫 클릭으로 전체화면에 들어갈 수 있으므로, 탭 상태를 명시적으로 만든다
+      await page.evaluate(() => document.documentElement.classList.remove('is-fullscreen'));
+      await page.waitForTimeout(50);
+      const topTab = await page.evaluate(() => document.getElementById('btn-conn').getBoundingClientRect().top);
+      await page.evaluate(() => document.documentElement.classList.add('is-fullscreen'));
+      await page.waitForTimeout(100);
+      const topFs = await page.evaluate(() => ({
+        top: document.getElementById('btn-conn').getBoundingClientRect().top,
+        clusterTop: document.getElementById('cluster').getBoundingClientRect().top,
+        clusterBottom: document.getElementById('cluster').getBoundingClientRect().bottom,
+        statusBottom: document.querySelector('.status').getBoundingClientRect().bottom,
+      }));
+      await page.evaluate(() => document.documentElement.classList.remove('is-fullscreen'));
+      if (isPortrait) {
+        check(`${vpTag} 세로 전체화면: 상태줄 top ≥ 32px (§20.1)`, topFs.top >= 32, `top=${topFs.top.toFixed(1)}`);
+        check(`${vpTag} 세로 전체화면: 클러스터가 상태줄 아래, 화면 안`, topFs.clusterTop >= topFs.statusBottom - 0.5 && topFs.clusterBottom <= vp.h + 0.5,
+          `clusterTop=${topFs.clusterTop.toFixed(1)} statusBottom=${topFs.statusBottom.toFixed(1)}`);
+        check(`${vpTag} 세로 탭: 상단 여백 기존 + 8px 이상 (§20.1)`, topTab >= 18 - 0.5, `top=${topTab.toFixed(1)}`);
+      } else {
+        check(`${vpTag} 가로 전체화면: 상태줄 기존 값 유지 (top ≤ 12px)`, topFs.top <= 12, `top=${topFs.top.toFixed(1)}`);
+      }
+
+      // §20.2 종료 버튼: 짧은 탭은 종료하지 않고 안내, 1.1초 길게 누르면 종료 오버레이
+      if (!(await page.evaluate(() => document.getElementById('sheet-settings').hidden))) {
+        await page.click('#sheet-settings .x');
+      }
+      await page.click('#btn-exit');
+      await page.waitForTimeout(200);
+      const tap = await page.evaluate(() => ({
+        overlay: !document.getElementById('quit-overlay').hidden,
+        toast: document.getElementById('toast-msg').textContent,
+      }));
+      check(`${vpTag} 종료 버튼 짧은 탭: 종료 안 됨, 안내 토스트`, !tap.overlay && tap.toast.includes('길게 누르면 종료됩니다'),
+        `overlay=${tap.overlay} toast="${tap.toast}"`);
+      await page.locator('#btn-exit').dispatchEvent('pointerdown');
+      await page.waitForTimeout(1100);
+      await page.waitForFunction(() => !document.getElementById('quit-overlay').hidden, null, { timeout: 3000 });
+      check(`${vpTag} 종료 버튼 1.1초 길게 누르기: 종료 오버레이 표시`, true);
+
       check(`뷰포트 ${vpTag} 전체 콘솔 에러 0`, errors.length === 0, errors.slice(0, 3).join(' | '));
       if (externalFailures.length) results.push(`INFO  외부 리소스 로드 실패 ${externalFailures.length}건(샌드박스 네트워크, 무시)`);
 
